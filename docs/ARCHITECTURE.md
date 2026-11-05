@@ -1,8 +1,10 @@
 # Roamly — System Architecture
 
+Implementation-ready blueprint for a **modular monolith**: NestJS (`apps/api`), Next.js (`apps/web`), PostgreSQL via Prisma, optional Redis/BullMQ for justified async work.
+
 ## Architectural overview
 
-Roamly ships as a **modular monolith**: one NestJS application (`apps/api`) and one Next.js application (`apps/web`), sharing types via `packages/shared`. PostgreSQL holds all durable trip and user state. External geo services are optional adapters; their outage must not block reading or editing saved trip content except features that strictly require live routing.
+PostgreSQL is the **source of truth**. WebSockets notify clients **after** successful commits. External geo providers are **replaceable adapters**; stub mode keeps saved trips usable.
 
 ```mermaid
 flowchart TB
@@ -17,431 +19,337 @@ flowchart TB
     Trips[Trips Module]
     Itin[Itinerary Module]
     Geo[Geo Module]
-    Wallet[Expenses Module]
+    Jobs[Jobs Module]
     Collab[Collaboration Module]
     GW --> Auth
     GW --> Trips
     GW --> Itin
     GW --> Geo
-    GW --> Wallet
     WS --> Collab
     Collab --> Trips
     Collab --> Itin
+    Itin --> Jobs
+    Jobs -.->|BullMQ when enabled| Redis[(Redis)]
   end
 
-  subgraph data [Data and External]
+  subgraph data [Persistence and External]
     PG[(PostgreSQL)]
-    Redis[(Redis optional)]
-    GeoP[Geo Provider Abstraction]
-    Geoapify[Geoapify or Stub]
+    FS[Storage Adapter local then cloud]
+    GeoP[geo-contracts + adapters]
   end
 
-  Web -->|REST| GW
+  Web -->|REST + session cookie| GW
   Web -->|WS trip rooms| WS
   Auth --> PG
   Trips --> PG
   Itin --> PG
-  Wallet --> PG
   Geo --> GeoP
-  GeoP --> Geoapify
+  Geo --> PG
   Itin --> GeoP
-  Collab --> PG
-  Redis -.->|BullMQ when justified| api
+  FS -->|binary objects| FS
+  PG -->|FileAsset metadata| FS
 ```
 
-## Architecture principles (enforcement)
+## Architecture principles
 
 | Principle | Implementation |
 |-----------|----------------|
-| Modular monolith | Nest modules with explicit exports; no cross-module repository leakage |
-| Logic out of controllers | Controllers: auth, validation, HTTP mapping → services |
-| Testable algorithms | `packages/itinerary-engine`, pure functions for expenses settlement |
-| PostgreSQL source of truth | All trip mutations persist before WS broadcast |
-| WebSockets | Notify success + revision; client refetch/merge |
-| Trip resource protection | Global `TripMembershipGuard` + role metadata on routes |
-| Itinerary versioning | `TripRevision` on material changes |
-| External API resilience | Stub provider, cached geo responses, UI degradation |
-| Optional expensive integrations | Feature flags; matrix jobs async when Redis/BullMQ added |
-| No AI in deterministic rules | Scoring/replan heuristics documented and unit-tested |
-| Avoid overengineering | No microservices, no event sourcing for v1 |
+| Modular monolith | One deployable API; explicit Nest module exports |
+| Logic out of controllers | Controllers validate → services → repositories |
+| Testable algorithms | `@roamly/itinerary-engine` without Nest/Prisma/geo SDKs |
+| DB-first writes | All durable changes in PostgreSQL transactions |
+| WS after commit | CollaborationService emits only post-commit |
+| Trip isolation | Server-side membership + RBAC on every trip resource |
+| Itinerary audit | `Trip.itineraryRevisionNumber` + `TripRevision` rows |
+| Provider resilience | Stub geo provider; cache; degrade search/routing only |
+| No AI in core rules | Deterministic scoring and replan heuristics |
+| No circular modules | Dependency graph enforced (see below) |
 
-## Proposed NestJS module boundaries
+## Authentication versus authorization
 
-Modules align with product domains. Dependencies flow **inward**: itinerary depends on trips and geo contracts; not the reverse.
+| Layer | Responsibility | Mechanism |
+|-------|----------------|-----------|
+| **Authentication** | Prove user identity | Session cookie → lookup `Session.tokenHash` → `userId` |
+| **Authorization** | Permit action on resource | `TripMember` row + `role`; optional `@TripRoles('organizer')` |
 
-| Module | Responsibility | Depends on |
-|--------|----------------|------------|
-| **Config** | Env validation, feature flags | — |
-| **Database** | Prisma module, transactions | Config |
-| **Auth** | Users, sessions, guards | Database |
-| **Trips** | Trip CRUD, TripMember, lifecycle | Auth, Database |
-| **Invitations** | TripInvitation, accept/decline | Trips, Auth, Notifications (optional) |
-| **Preferences** | MemberPreference, aggregates | Trips |
-| **Destinations** | DestinationCandidate, Poll, Vote, compatibility service | Preferences, Trips |
-| **Geo** | Provider registry, caching, Place persistence helpers | Config, Database |
-| **Places** | SavedPlace, trip place lists | Trips, Geo |
-| **Itinerary** | TripDay, ItineraryItem, participants, revisions | Trips, Places, Geo (travel time) |
-| **Optimisation** | Ordering suggestions, conflict reports | Itinerary, itinerary-engine package |
-| **Collaboration** | WS gateway, room join, broadcast after commit | Trips, Itinerary |
-| **Expenses** | Expense, splits, settlements | Trips |
-| **Bookings** | Booking records | Trips, Files |
-| **Files** | FileAsset upload metadata, storage adapter | Trips, Auth |
-| **LiveTrip** | Today aggregation queries | Itinerary, Bookings |
-| **Replanning** | ReplanningProposal, approval apply | Itinerary, Optimisation, Bookings |
-| **Memories** | TripMemory, template export | Trips, Itinerary |
-| **Notifications** | In-app notification records | Trips, Auth |
+Unauthenticated requests receive **401**. Authenticated but non-member receives **403**. Wrong role receives **403** with stable error code. Trip id in URL never grants access without membership query.
 
-**Shared kernel (packages):**
+### Session flow
 
-- `@roamly/shared` — Zod schemas, enums (roles, trip status, item types)
-- `@roamly/itinerary-engine` — compatibility math, conflict detection, TSP-like heuristics
-- `@roamly/geo-contracts` — provider interfaces
+1. Login/register verifies credentials → create session row with hashed token → `Set-Cookie` httpOnly.
+2. Each request: hash cookie token → load session if not expired → attach user to request context.
+3. Logout deletes session; “logout all devices” deletes all sessions for user.
+4. Mutating requests include CSRF token; origin header validated against allowlist.
 
-## Request flow (typical mutating itinerary change)
+## Role-based access control (initial matrix)
 
-1. Client sends REST mutation with `expectedRevision` (or `If-Match`).
-2. Guard verifies JWT/session and **TripMember** role allows edit.
-3. **ItineraryService** runs in transaction: validate items, write rows, bump `TripRevision`.
-4. Transaction commits.
-5. **CollaborationService** emits WS event `{ tripId, revisionNumber, type: 'itinerary.updated' }`.
-6. Clients invalidate TanStack Query keys scoped to `tripId`.
+| Action | organizer | member | viewer |
+|--------|:---------:|:------:|:------:|
+| View trip workspace | ✓ | ✓ | ✓ |
+| Edit preferences / vote | ✓ | ✓ | — |
+| Edit itinerary | ✓ | ✓ | — |
+| Manage expenses | ✓ | ✓ | — |
+| Invite / change roles | ✓ | — | — |
+| Approve replan proposal | ✓ | — | — |
+| Trip status (planning → active) | ✓ | — | — |
+| Archive / delete trip | ✓ | — | — |
+
+Fine-grained policy tweaks stay in trip services; guards enforce coarse roles.
+
+## Module boundaries and dependency rules
+
+Modules **export services** consumed by others; they do **not** import peer controllers. **No circular imports.**
+
+```mermaid
+flowchart BT
+  Config --> Database
+  Auth --> Database
+  Trips --> Auth
+  Invitations --> Trips
+  Preferences --> Trips
+  Destinations --> Preferences
+  Destinations --> Trips
+  Geo --> Config
+  Geo --> Database
+  Places --> Trips
+  Places --> Geo
+  Itinerary --> Trips
+  Itinerary --> Places
+  Itinerary --> Geo
+  Optimisation --> Itinerary
+  Expenses --> Trips
+  Bookings --> Trips
+  Files --> Trips
+  Files --> Auth
+  LiveTrip --> Itinerary
+  LiveTrip --> Bookings
+  Replanning --> Itinerary
+  Replanning --> Optimisation
+  Replanning --> Bookings
+  Memories --> Trips
+  Memories --> Itinerary
+  Notifications --> Trips
+  Notifications --> Auth
+  Collaboration --> Trips
+  Collaboration --> Itinerary
+  Jobs --> Config
+```
+
+| Module | Responsibility |
+|--------|----------------|
+| **Config** | Env validation, feature flags |
+| **Database** | PrismaService, transaction helper |
+| **Auth** | User, Session, password, CSRF helpers, session guards |
+| **Trips** | Trip CRUD, TripMember, lifecycle, **`itineraryRevisionNumber`** |
+| **Invitations** | TripInvitation, accept/decline (idempotent) |
+| **Preferences** | MemberPreference |
+| **Destinations** | DestinationCandidate, Poll, Vote, snapshot persistence |
+| **Geo** | Provider registry, Geoapify adapter, stub, response cache |
+| **Places** | Place canonicalization, SavedPlace |
+| **Itinerary** | TripDay, ItineraryItem, participants, revision transactions |
+| **Optimisation** | Conflict reports, order suggestions (calls engine) |
+| **Expenses** | Expense, splits, settlement suggestions |
+| **Bookings** | Manual bookings, **confirmed** flag for replan protection |
+| **Files** | FileAsset metadata, **StorageAdapter** |
+| **LiveTrip** | Today read model |
+| **Replanning** | Proposals, approval apply, booking/lock preservation |
+| **Memories** | TripMemory, template clone rules |
+| **Notifications** | In-app notification records |
+| **Collaboration** | WS gateway, room auth, post-commit emit |
+| **Jobs** | BullMQ producers/consumers when Redis enabled |
+
+**Shared packages:** `@roamly/shared`, `@roamly/itinerary-engine`, `@roamly/geo-contracts`.
+
+## Database transaction boundaries
+
+| Operation | Transaction scope |
+|-----------|---------------------|
+| Itinerary mutation | Update items/days + insert `TripRevision` + increment `Trip.itineraryRevisionNumber` — **one transaction** |
+| Replan approve | Apply patch + new revision + update proposal status — **one transaction** |
+| Accept invite | Mark invitation + insert TripMember — **one transaction** |
+| Expense + participants | Insert expense + participants + recompute settlements — **one transaction** (or sync recompute in same TX) |
+| Recommendation snapshot | Insert snapshot after compute (compute may be in-memory; persist atomically) |
+| File upload | Insert FileAsset then stream to storage; on storage failure **rollback** DB row |
+
+Cross-module calls use injected services participating in the same `Prisma.$transaction` callback where needed.
+
+## Optimistic concurrency
+
+- Client reads `itineraryRevisionNumber` with trip/itinerary payload.
+- Mutations send `expectedRevision`.
+- If `expectedRevision !== Trip.itineraryRevisionNumber` → **409** with `{ currentRevision, message }`.
+- Client refetches and retries user action; no silent last-writer-wins on itinerary.
+
+Optional HTTP `If-Match: W/"<revision>"` mirror for GET/HEAD caching — body field is canonical for API v1.
+
+## Idempotency for retryable operations
+
+| Case | Approach |
+|------|----------|
+| Invitation accept | DB unique `(tripId, userId)`; second accept returns existing membership |
+| Vote | Unique `(pollId, userId)` |
+| Expense POST retry | Client `Idempotency-Key` → stored response replay within TTL |
+| Itinerary POST | Revision gate; client must update `expectedRevision` after 409 |
+
+## Background jobs (Redis + BullMQ)
+
+Introduced when justified (routing matrix prefetch, heavy replan analysis, batch notifications).
+
+- **Producers** in Itinerary/Replanning modules enqueue typed jobs.
+- **Workers** in Jobs module; inject domain services; **no duplicate side effects** without idempotency keys.
+- **Retries:** exponential backoff; max attempts documented in ENGINEERING_DECISIONS.
+- **Failure:** job marked failed; itinerary state unchanged until explicit apply endpoint succeeds.
+
+Synchronous path remains valid for small trips when queue disabled.
+
+## Request flow: itinerary mutation
+
+1. `SessionAuthGuard` + `TripMembershipGuard` + role check.
+2. Validate DTO (Zod) including `expectedRevision`.
+3. `ItineraryService.mutate()` inside `$transaction`:
+   - Lock trip row (`SELECT FOR UPDATE`) or compare revision in UPDATE WHERE clause.
+   - If mismatch → abort → 409.
+   - Apply changes; insert `TripRevision`; increment `Trip.itineraryRevisionNumber`.
+4. Commit.
+5. `CollaborationService.broadcast(tripId, { type: 'itinerary.updated', itineraryRevisionNumber })`.
+6. Client invalidates TanStack Query keys.
 
 ## Initial data model
 
-Conceptual relational model (not Prisma syntax). IDs are UUIDs unless noted.
+Conceptual model (not Prisma). UUID primary keys.
 
-### Core identity
+### Identity and sessions
 
-**User**
+**User** — `email` unique, `passwordHash`, `displayName`, timestamps.
 
-- `id`, `email` (unique), `passwordHash` (nullable if OAuth-only later), `displayName`, `createdAt`, `updatedAt`
-- Ownership: user owns their row; no trip coupling
-
-**Session** (if server-side sessions)
-
-- `id`, `userId`, `tokenHash`, `expiresAt`, `createdAt`
-- FK: `userId → User` (cascade delete)
+**Session** — `userId`, `tokenHash` (never plaintext token), `expiresAt`, `createdAt`, optional `revokedAt`.
 
 ### Trip shell
 
-**Trip**
+**Trip** — metadata, `status`, dates, `timezone`, `defaultCurrency`, **`itineraryRevisionNumber`** (starts at 0 or 1; monotonic), `createdById`.
 
-- `id`, `title`, `description`, `status` (enum: draft, planning, active, completed, archived)
-- `startDate`, `endDate` (date), `timezone` (IANA string)
-- `defaultCurrency` (char(3))
-- `createdById`, `createdAt`, `updatedAt`
-- FK: `createdById → User`
-- Ownership: accessible only via **TripMember**; creator is initial organizer
+**TripMember** — unique `(tripId, userId)`, `role` enum.
 
-**TripMember**
+**TripInvitation** — email, role, hashed token, status, expiry.
 
-- `id`, `tripId`, `userId`, `role` (organizer | member | viewer)
-- `joinedAt`
-- **Unique:** `(tripId, userId)`
-- FK: `tripId → Trip`, `userId → User`
-- Rule: at least one organizer per trip (enforced in service layer)
+### Preferences, destinations, recommendations
 
-**TripInvitation**
+**MemberPreference** — unique `(tripId, userId)`; JSON availability/constraints.
 
-- `id`, `tripId`, `email`, `role`, `tokenHash`, `status` (pending | accepted | declined | expired)
-- `invitedById`, `expiresAt`, `createdAt`
-- **Unique:** `(tripId, email)` where status pending (partial unique pattern or app-level check)
-- FK: `tripId → Trip`, `invitedById → User`
+**DestinationCandidate** — trip-scoped options.
 
-### Preferences and destinations
+**Poll** / **Vote** — vote unique `(pollId, userId)`.
 
-**MemberPreference**
+**RecommendationSnapshot** — persisted ranking run:
 
-- `id`, `tripId`, `userId`
-- `availabilityJson` (structured windows), `budgetMinor` (nullable), `budgetCurrency`, `hardConstraintsJson`, `softPreferencesJson`
-- **Unique:** `(tripId, userId)`
-- FK: `tripId → Trip`, `userId → User` (must be TripMember)
+- `tripId`, `algorithmVersion` (string)
+- `preferenceSnapshotJson` (copy of inputs used)
+- `candidateIds` (ordered array or junction)
+- `scoreBreakdownJson` (per candidate: group score, member breakdown, hard failures, warnings)
+- `rankedCandidateIds`
+- `createdAt`, optional `createdById`
 
-**DestinationCandidate**
-
-- `id`, `tripId`, `name`, `regionCode` (optional), `centerLat`, `centerLng`
-- `metadataJson` (climate tags, cost tier, source notes)
-- `createdAt`
-- FK: `tripId → Trip`
-
-**Poll**
-
-- `id`, `tripId`, `question`, `pollType` (destination | generic), `closesAt`, `createdById`
-- FK: `tripId → Trip`
-
-**Vote**
-
-- `id`, `pollId`, `userId`, `destinationCandidateId` (nullable), `choiceJson`
-- **Unique:** `(pollId, userId)`
-- FK: `pollId → Poll`, `userId → User`, optional `destinationCandidateId`
-
-Compatibility scores may be **computed on read** and cached ephemerally; persist only if needed for audit (`DestinationScoreSnapshot` deferred unless product requires historical ranking).
+Recompute creates a **new** snapshot row; UI defaults to latest unless user selects history.
 
 ### Places
 
-**Place**
+**Place** — unique `(provider, providerPlaceId)`.
 
-- Canonical place record: `id`, `provider`, `providerPlaceId`, `name`, `lat`, `lng`, `addressJson`, `categoriesJson`, `rawProviderJson` (optional)
-- **Unique:** `(provider, providerPlaceId)`
-
-**SavedPlace**
-
-- `id`, `tripId`, `placeId`, `notes`, `addedById`, `createdAt`
-- **Unique:** `(tripId, placeId)` optional if duplicates allowed with different notes — default **unique (tripId, placeId)**
-- FK: `tripId → Trip`, `placeId → Place`
+**SavedPlace** — unique `(tripId, placeId)` default.
 
 ### Itinerary
 
-**TripDay**
+**TripDay** — unique `(tripId, date)`.
 
-- `id`, `tripId`, `date`, `label` (optional)
-- **Unique:** `(tripId, date)`
-- FK: `tripId → Trip`
+**ItineraryItem** — schedule fields, `isLocked`, optional `placeId`.
 
-**ItineraryItem**
+**ItineraryParticipant** — unique `(itineraryItemId, userId)`.
 
-- `id`, `tripDayId`, `sortOrder`, `itemType` (activity | transit | meal | lodging | buffer | custom)
-- `title`, `placeId` (nullable), `startTime`, `endTime` (nullable, local trip TZ)
-- `durationMinutes`, `isLocked`, `notes`
-- `createdAt`, `updatedAt`
-- FK: `tripDayId → TripDay`, `placeId → Place`
-
-**ItineraryParticipant**
-
-- `id`, `itineraryItemId`, `userId`
-- **Unique:** `(itineraryItemId, userId)`
-- FK: item and User (member of trip enforced in service)
-
-**TripRevision**
-
-- `id`, `tripId`, `revisionNumber` (integer, monotonic per trip)
-- `summary`, `createdById`, `createdAt`, `snapshotJson` (optional diff or full snapshot — start with diff metadata + item ids)
-- **Unique:** `(tripId, revisionNumber)`
-- FK: `tripId → Trip`
-
-Current revision pointer: store `currentRevisionNumber` on **Trip** or derive from max — **DECISION NEEDED**; recommendation: column on `Trip` updated in same transaction as new revision.
+**TripRevision** — unique `(tripId, revisionNumber)`; `summary`, `createdById`, `changeMetadataJson`.
 
 ### Wallet
 
-**Expense**
+**Expense** — `splitMode`, minor units.
 
-- `id`, `tripId`, `paidById`, `amountMinor`, `currency`, `description`, `expenseDate`, `createdAt`
-- FK: `tripId → Trip`, `paidById → User`
+**ExpenseParticipant** — shares.
 
-**ExpenseParticipant**
-
-- `id`, `expenseId`, `userId`, `shareMinor` (for custom split) or `splitType` at expense level
-- Expense-level: `splitMode` (equal | custom | payer_only)
-- **Unique:** `(expenseId, userId)` when participant in split
-- FK: `expenseId → Expense`
-
-**Settlement**
-
-- `id`, `tripId`, `fromUserId`, `toUserId`, `amountMinor`, `currency`, `status` (suggested | marked_paid)
-- Computed suggestions stored for UX stability; recompute invalidates old `suggested` rows
-- FK: `tripId → Trip`
+**Settlement** — suggested or marked paid.
 
 ### Bookings and files
 
-**Booking**
+**Booking** — manual record; **`isConfirmed`** (or status enum) — **confirmed bookings must not be moved or deleted by automated replan**; linked `itineraryItemId` optional.
 
-- `id`, `tripId`, `title`, `confirmationCode`, `startsAt`, `endsAt`, `linkedItineraryItemId` (nullable)
-- `vendorName`, `notes`, `createdById`
-- FK: `tripId → Trip`
-
-**FileAsset**
-
-- `id`, `tripId`, `uploadedById`, `storageKey`, `filename`, `mimeType`, `sizeBytes`, `createdAt`
-- Optional FK to `bookingId` or `itineraryItemId`
-- FK: `tripId → Trip`
+**FileAsset** — metadata + `storageKey`; binary in **StorageAdapter** only.
 
 ### Replanning and memories
 
-**ReplanningProposal**
+**ReplanningProposal** — `baseRevisionNumber`, payload JSON, status, reviewer.
 
-- `id`, `tripId`, `baseRevisionNumber`, `proposedRevisionPayloadJson`, `status` (pending | approved | rejected)
-- `reason`, `createdById` (system user id or member), `reviewedById`, `reviewedAt`
-- FK: `tripId → Trip`
+**TripMemory** — post-trip content.
 
-**TripMemory**
+**IdempotencyRecord** (optional table) — key hash, response, expiry for retryable POSTs.
 
-- `id`, `tripId`, `authorId`, `body`, `memoryDate`, `createdAt`
-- Optional link to `placeId` or `itineraryItemId`
-- FK: `tripId → Trip`
+### Ownership rules
 
-### Entity relationship summary
-
-```mermaid
-erDiagram
-  User ||--o{ TripMember : joins
-  Trip ||--o{ TripMember : has
-  Trip ||--o{ TripInvitation : invites
-  Trip ||--o{ MemberPreference : collects
-  Trip ||--o{ DestinationCandidate : considers
-  Trip ||--o{ TripDay : schedules
-  TripDay ||--o{ ItineraryItem : contains
-  ItineraryItem ||--o{ ItineraryParticipant : assigns
-  Trip ||--o{ TripRevision : versions
-  Trip ||--o{ Expense : tracks
-  Expense ||--o{ ExpenseParticipant : splits
-  Trip ||--o{ Booking : records
-  Trip ||--o{ FileAsset : stores
-  Trip ||--o{ ReplanningProposal : proposes
-  Place ||--o{ SavedPlace : saved_on
-  Place ||--o{ ItineraryItem : locates
-```
-
-### Ownership and authorization rules
-
-- **User**: self read/update only (except admin — out of scope).
-- **Trip**: read/write iff **TripMember**; delete/archive organizer only.
-- **Child entities** (`ItineraryItem`, `Expense`, etc.): inherit `tripId`; guards load trip membership once per request.
-- **Invitations**: accept creates **TripMember**; token single-use.
-- **Files**: download only with trip membership; storage keys never guessable (UUID paths).
+All trip children authorized via `tripId` → membership check. Files and snapshots inherit trip scope.
 
 ## Critical engineering problems
 
 ### A. Group destination compatibility
 
-**Hard vs soft**
-
-- Hard constraints filter candidates (budget max, forbidden regions, date incompatibility from **MemberPreference.availabilityJson**). Failures appear in explanation list.
-- Soft preferences contribute weighted score components (interest tags, pace, climate).
-
-**Individual suitability**
-
-- For each `(member, candidate)`, compute `score_i ∈ [0, 100]` from soft matches minus penalties for near-hard misses (e.g. slightly over budget intent).
-
-**Group satisfaction and fairness**
-
-- **Aggregate**: e.g. weighted average with organizer-adjustable weights default equal.
-- **Fairness**: track `min_i score_i`; ranking penalizes low min (max-min fairness lite) so one unhappy member drops rank.
-- Document formula in `itinerary-engine` tests with fixed fixtures.
-
-**Explainable ranking**
-
-- API returns ordered list with per-candidate: `groupScore`, `memberBreakdown[]`, `failedHard[]`, `warnings[]`.
-- No ML; rules are versioned code.
+Hard constraints filter; soft preferences score per member; aggregate with fairness penalty on minimum member score. **`@roamly/itinerary-engine`** implements math; API persists **RecommendationSnapshot** with `algorithmVersion` and full breakdown. Rankings are explainable and reproducible from snapshot inputs.
 
 ### B. Itinerary planning
 
-**Inputs**
-
-- Items with duration, optional fixed start, **isLocked**, place coordinates, opening hours in `Place` metadata when available.
-
-**Travel time**
-
-- Pairwise durations from geo provider or haversine fallback with speed assumption; cache `(placeIdA, placeIdB, profile)` in DB or Redis TTL.
-
-**Conflicts**
-
-- Overlapping `[start, end)` on same day; travel gap insufficient between consecutive items; outside opening hours → `ConflictReport` with severity.
-
-**Locked activities**
-
-- Optimiser must not move locked items; may still flag impossible schedules.
-
-**Route order**
-
-- Per day: heuristic (nearest-neighbor seed + 2-opt local search) on unlocked items with fixed anchors.
-- Document **limitations**: not globally optimal; multi-day order separate; no traffic live unless provider supports and is enabled.
-
-**Opening hours**
-
-- When missing, skip constraint; UI shows “hours unknown.”
+Travel times from geo provider or haversine fallback; cache in PostgreSQL or Redis. Conflicts: overlaps, insufficient travel gaps, opening hours when known. Locked items fixed in optimiser. Route order: nearest-neighbor + 2-opt heuristic — **not globally optimal**; communicated in UI. Provider failure: manual times and saved places still work.
 
 ### C. Collaborative editing
 
-**Rooms**
-
-- WS channel `trip:{tripId}`; join only after auth + membership verified.
-
-**Database-first**
-
-- All edits REST → transaction → commit → broadcast.
-
-**Revision numbers**
-
-- Monotonic `TripRevision.revisionNumber`; client sends `expectedRevision` on mutate.
-
-**Optimistic concurrency**
-
-- Mismatch → `409 Conflict` with server revision; client merges or refetches.
-
-**Conflicting updates**
-
-- Last-writer-wins **avoided** for itinerary; revision gate forces explicit retry.
-- Optional: field-level merge for notes only in later iteration.
+Trip WS rooms; DB-first; revision gate; 409 on stale writes; broadcast after commit. Single API instance initially.
 
 ### D. Expenses
 
-**Storage**
-
-- All amounts `bigint` minor units; currency per expense matching trip default unless overridden.
-
-**Splits**
-
-- **Equal**: `shareMinor = floor(total/n)`; remainder assigned by stable userId order (document algorithm).
-- **Custom**: sum of `shareMinor` must equal `amountMinor`.
-- **Payer only**: only `paidById` liable; others informational zero.
-
-**Net balance**
-
-- Per user: `paid - owed`; graph simplified to **Settlement** suggestions via greedy min-cash-flow or standard debt reduction — pure function in tests.
-
-**Participant-based**
-
-- Only **ExpenseParticipant** users included in owed calculation for that expense.
+Minor units; equal/custom splits with documented remainder assignment; settlement as pure function tests.
 
 ### E. Adaptive replanning
 
-**Trigger**
+Detect affected items; **preserve `Booking.isConfirmed` and `ItineraryItem.isLocked`**; propose alternatives; store **ReplanningProposal** against `baseRevisionNumber`; organizer approval applies in one transaction with new revision.
 
-- User reports disruption (delay minutes, closed place) or bulk “replan day.”
+## Provider failures and graceful degradation
 
-**Affected activities**
+| Component | Degraded behavior |
+|-----------|-------------------|
+| Geo provider | Search/route/matrix disabled; cached routes used if present; stub in CI |
+| Redis / queue | Sync fallback or skip background prefetch |
+| WebSocket | REST still authoritative; optional polling |
+| Storage | Upload fails fast; reads of existing files may fail with clear error |
+| PostgreSQL down | Full outage (expected) |
 
-- Graph walk from changed item: overlapping items, downstream travel infeasible, same `placeId` closures.
+## Testing strategy and security boundaries
 
-**Preserve bookings**
+| Area | Approach |
+|------|----------|
+| itinerary-engine | Pure unit tests, golden fixtures |
+| Auth | Supertest: cookie flags, CSRF rejection, session expiry |
+| Authorization | Non-member 403 matrix per module |
+| Concurrency | Two parallel mutates → one 409 |
+| Geo | Stub provider only in CI |
+| E2E | Playwright per milestone flows |
+| Secrets | Never in repo; compose env templates without values |
 
-- Items linked to **Booking** with confirmed status or `isLocked` excluded from auto-move; proposals flag manual review if conflict.
+## Frontend architecture
 
-**Alternatives**
+App Router groups: `(auth)`, `(app)/trips/[tripId]/*`. TanStack Query keys include `itineraryRevisionNumber`. MapLibre for map display. CSRF token available to client for mutations (e.g. meta tag or bootstrap endpoint).
 
-- Search **SavedPlace** + nearby **Place** search (if geo up); substitute same `itemType` and similar duration heuristics.
+## Auditability
 
-**Versioned proposals**
+Material trip changes:
 
-- **ReplanningProposal** stores JSON patch against `baseRevisionNumber`; approval applies patch in transaction, new **TripRevision**, reject leaves current.
-
-**Human approval**
-
-- Organizer (or configurable role) must `approve`; members may `suggest` only if product allows — initial: organizer approves.
-
-## Frontend architecture (web)
-
-- **App Router** route groups: `(auth)`, `(app)/trips/[tripId]/...`
-- **TanStack Query** keys: `['trip', id]`, `['itinerary', tripId, revision]`
-- **MapLibre** in client components; token/source from public env
-- **shadcn/ui** for layout, forms, dialogs (polls, proposals)
-- Optimistic updates only where revision retry UX is implemented (M7+)
-
-## Degradation matrix
-
-| Failure | User impact |
-|---------|-------------|
-| Geoapify down | Search/route disabled; saved places and manual items work |
-| WS disconnect | Polling fallback optional; REST still authoritative |
-| DB up | Full functionality |
-
-## Security summary
-
-- HTTPS only in prod; httpOnly cookies if session-based
-- CSRF for cookie auth; SameSite strict
-- Rate limit auth and invitation endpoints
-- File upload size/type allowlist
+- Itinerary: every bump → `TripRevision` + monotonic number on `Trip`.
+- Recommendations: append-only snapshots.
+- Replanning: proposal status + reviewer ids and timestamps.
+- Expenses: immutable amount after create (edits as new adjustment or explicit edit policy in M8 — document in implementation).
 
 ---
 
-*Related documents: [PRODUCT_SPEC.md](./PRODUCT_SPEC.md), [ROADMAP.md](./ROADMAP.md), [ENGINEERING_DECISIONS.md](./ENGINEERING_DECISIONS.md)*
+*Related: [PRODUCT_SPEC.md](./PRODUCT_SPEC.md), [ROADMAP.md](./ROADMAP.md), [ENGINEERING_DECISIONS.md](./ENGINEERING_DECISIONS.md)*

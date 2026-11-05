@@ -1,8 +1,8 @@
 # Roamly — Development Roadmap
 
-Phased delivery from product definition through production-ready release. Milestones are sequential unless noted; parallel work within a milestone is allowed when dependencies are met.
+Phased delivery from product definition through production release. Milestones **M1–M12** are independently verifiable: each defines scope, engineering work, dependencies, acceptance criteria, and testing expectations.
 
-**Legend:** M1–M12 map to the phases in the product brief.
+Capability map (unchanged product vision): create trip → preferences → destination intelligence → maps → itinerary → collaboration → wallet → bookings/documents → live trip → replanning → memories/release.
 
 ---
 
@@ -10,23 +10,19 @@ Phased delivery from product definition through production-ready release. Milest
 
 ### Objective
 
-Align product scope, domain boundaries, data model, engineering approaches, and stack before code.
+Establish an implementation-ready product and technical blueprint before code.
 
-### User-visible outcome
+### Scope
 
-None (documentation only).
+- Document product vision, domains, data model concepts, algorithms, security, and phased delivery.
+- Finalize agreed decisions (sessions, revision concurrency, geo abstraction, recommendation snapshots, storage abstraction, WS/deployment posture).
+- No application source, dependencies, or database migrations.
 
-### Backend responsibilities
+### Important engineering work
 
-None.
-
-### Frontend responsibilities
-
-None.
-
-### Important tests
-
-None.
+- Author and align `docs/PRODUCT_SPEC.md`, `ARCHITECTURE.md`, `ENGINEERING_DECISIONS.md`, `ROADMAP.md`.
+- Add root `README.md` and `IMPLEMENTATION_STATUS.md`.
+- Resolve prior doc contradictions (JWT vs session, revision pointer, snapshot persistence).
 
 ### Dependencies
 
@@ -34,10 +30,14 @@ None.
 
 ### Acceptance criteria
 
-- [ ] `docs/PRODUCT_SPEC.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `ENGINEERING_DECISIONS.md` complete and consistent.
-- [ ] Foundational vs later domains identified.
-- [ ] Critical problems A–E documented with testable approaches.
-- [ ] No application code or dependency installation.
+- [ ] All docs internally consistent with agreed architectural decisions.
+- [ ] Auth vs authorization, RBAC, transactions, 409 concurrency, idempotency, jobs, and degradation documented in ARCHITECTURE.
+- [ ] Recommendation snapshots and `Trip.itineraryRevisionNumber` specified.
+- [ ] No application code or package installation.
+
+### Testing expectations
+
+None (documentation-only).
 
 ---
 
@@ -45,28 +45,22 @@ None.
 
 ### Objective
 
-Bootstrap pnpm monorepo, Docker Compose for PostgreSQL, CI skeleton, and empty app shells with health checks.
+Bootstrap the monorepo and developer environment so feature work can begin safely.
 
-### User-visible outcome
+### Scope
 
-Developer can clone, `pnpm install`, start DB and apps, see API health and web placeholder home.
+- pnpm workspaces, empty `apps/web` and `apps/api`, shared packages stubs.
+- Docker Compose PostgreSQL; documented local startup.
+- CI pipeline (lint, typecheck, smoke tests).
+- Placeholder web home and API `/health`.
 
-### Backend responsibilities
+### Important engineering work
 
-- NestJS app with Config, Database (Prisma migrate empty or User-only stub migration deferred to M3), health module.
-- Env validation schema.
-- Supertest smoke test for `/health`.
-
-### Frontend responsibilities
-
-- Next.js App Router, Tailwind, shadcn init, layout shell.
-- TanStack Query provider wiring (no trip data yet).
-
-### Important tests
-
-- CI: lint, typecheck, unit smoke.
-- Supertest: health endpoint.
-- Playwright: home page loads (optional smoke).
+- **Backend:** NestJS Config module, env validation, health controller, Prisma module wired without feature schema (or empty migration only if required for tooling).
+- **Frontend:** Next.js App Router, Tailwind, shadcn init, TanStack Query provider.
+- **Shared:** `packages/shared` scaffold; export placeholder types.
+- **Packages:** create empty `packages/geo-contracts` and `packages/itinerary-engine` with test runner configured.
+- **Infra:** GitHub Actions workflow; `.env.example` without secrets.
 
 ### Dependencies
 
@@ -74,10 +68,14 @@ M1 complete.
 
 ### Acceptance criteria
 
-- [ ] pnpm workspaces: `apps/web`, `apps/api`, `packages/shared`.
-- [ ] Docker Compose PostgreSQL documented in README.
-- [ ] GitHub Actions runs on PR.
-- [ ] No feature modules beyond health/config.
+- [ ] `pnpm install` and compose-up documented in README.
+- [ ] CI green on default branch for lint/typecheck/smoke.
+- [ ] No trip/auth/feature modules beyond health/config.
+
+### Testing expectations
+
+- Supertest: `GET /health` → 200.
+- Optional Playwright: home page renders.
 
 ---
 
@@ -85,29 +83,19 @@ M1 complete.
 
 ### Objective
 
-Users authenticate; create trips; invite and accept members; enforce membership on all trip routes.
+Secure identity, trip creation, invitations, and **server-side trip membership enforcement** on all trip routes.
 
-### User-visible outcome
+### Scope
 
-Sign up/in, create trip, invite by email/link, accept invite, see trip list and trip overview with member list and roles.
+- Register, login, logout, session expiration/revocation.
+- Create and list trips; invite and accept members; roles (organizer, member, viewer).
+- User-visible: auth pages, trip list, trip overview, member list, invite/accept flows.
 
-### Backend responsibilities
+### Important engineering work
 
-- Auth module (strategy per ENGINEERING_DECISIONS once chosen).
-- Trips, TripMember, Invitations modules.
-- Guards: authenticated, trip member, organizer where needed.
-- Prisma schema for User, Session (if used), Trip, TripMember, TripInvitation.
-
-### Frontend responsibilities
-
-- Auth pages, trip list, create trip form, trip settings, invite flow, accept invite page.
-- React Hook Form + Zod shared schemas.
-
-### Important tests
-
-- Unit: invitation token expiry, unique membership.
-- Supertest: unauthorized trip access 403; accept invite idempotency.
-- Playwright: register → create trip → invite second user (test mailbox or seeded token).
+- **Backend:** Auth module — argon2/bcrypt, Session with hashed tokens, httpOnly cookies, CSRF + origin checks. Trips + Invitations modules. Guards: session, trip membership, trip roles. Prisma: User, Session, Trip, TripMember, TripInvitation. Initialize `Trip.itineraryRevisionNumber` (default 0 or 1).
+- **Frontend:** Auth forms (RHF + Zod shared schemas), trip CRUD UI, invitation flows.
+- **Security:** Rate limit auth endpoints; never trust client `userId` for authorization.
 
 ### Dependencies
 
@@ -115,9 +103,17 @@ M2.
 
 ### Acceptance criteria
 
-- [ ] Every trip endpoint verifies membership server-side.
+- [ ] Unauthenticated trip access returns 401/403 as appropriate.
+- [ ] Non-member cannot read or mutate trip resources.
+- [ ] Invitation accept is idempotent; unique membership per user per trip.
 - [ ] At least one organizer invariant enforced.
-- [ ] Session/JWT decision implemented and documented.
+- [ ] Session/JWT ambiguity removed — sessions only.
+
+### Testing expectations
+
+- Unit: invitation expiry; membership uniqueness.
+- Supertest: CSRF failure on mutate without token; non-member 403; accept invite twice safe.
+- Playwright: register → create trip → invite/accept with second user.
 
 ---
 
@@ -125,28 +121,17 @@ M2.
 
 ### Objective
 
-Collect member preferences; add destination candidates; run explainable compatibility ranking; polls/votes.
+Collect group preferences, compare destinations with **explainable deterministic scoring**, and run polls/votes—with **persisted recommendation snapshots**.
 
-### User-visible outcome
+### Scope
 
-Preference forms per member; destination list with scores and explanations; poll to choose destination.
+- Member preference forms; destination candidates; ranked compatibility with breakdowns; polls/votes.
+- User-visible: preference wizard, comparison UI with explanations, poll/vote UI, snapshot history (latest default).
 
-### Backend responsibilities
+### Important engineering work
 
-- Preferences, Destinations modules.
-- Compatibility service using `@roamly/itinerary-engine` (pure functions).
-- Poll/Vote CRUD; aggregate results.
-
-### Frontend responsibilities
-
-- Preference wizard, destination comparison table/cards with member breakdown.
-- Poll UI and vote submission.
-
-### Important tests
-
-- Unit: scoring and fairness fixtures; hard constraint filtering.
-- Supertest: only members vote once; preference upsert unique per trip/user.
-- Playwright: two members set preferences → ranking visible with explanations.
+- **Backend:** Preferences, Destinations modules. Integrate `@roamly/itinerary-engine` for scoring. Persist **RecommendationSnapshot** (`algorithmVersion`, preference snapshot, candidate ids, score breakdown, timestamp). Poll/Vote CRUD.
+- **Frontend:** Comparison tables/cards showing member breakdown and hard constraint failures.
 
 ### Dependencies
 
@@ -154,8 +139,16 @@ M3.
 
 ### Acceptance criteria
 
-- [ ] Ranking API returns explainable breakdown (no opaque single number only).
-- [ ] Hard constraint failures visible on candidates.
+- [ ] Ranking API returns explainable breakdown, not a single opaque score.
+- [ ] Each explicit (re)compute creates a persisted snapshot row.
+- [ ] Hard constraint failures visible per candidate.
+- [ ] `algorithmVersion` stored and visible for audit.
+
+### Testing expectations
+
+- Unit: engine fixtures for fairness and hard filters; version constant tests.
+- Supertest: vote uniqueness; snapshot created on rank endpoint.
+- Playwright: two members submit preferences → ranking and explanations visible.
 
 ---
 
@@ -163,140 +156,18 @@ M3.
 
 ### Objective
 
-Integrate MapLibre; geo provider abstraction with Geoapify implementation and stub; save places to trip.
+MapLibre map experience and provider-neutral geo integration with stub for tests; saved places on trips.
 
-### User-visible outcome
+### Scope
 
-Map on trip; search places; save to trip list; view saved places with notes.
+- Search/geocode/places via abstraction; save places to trip; map display.
+- User-visible: trip map, search, saved places list with notes.
+- Saved trip data remains accessible when external provider unavailable.
 
-### Backend responsibilities
+### Important engineering work
 
-- Geo module: provider interface, cache layer, Geoapify + stub.
-- Places module: Place upsert from provider, SavedPlace CRUD.
-
-### Frontend responsibilities
-
-- MapLibre map component, search autocomplete, saved places panel.
-- Graceful error when provider disabled.
-
-### Important tests
-
-- Unit: stub provider returns fixtures; cache key behavior.
-- Supertest: save place creates canonical Place + SavedPlace; non-member denied.
-- Playwright: search (mocked API) → save → appears in list.
-
-### Dependencies
-
-M3 (M4 optional for trip context but trip shell required).
-
-### Acceptance criteria
-
-- [ ] No Nest service imports Geoapify SDK directly outside geo adapter.
-- [ ] Trip readable when provider stubbed in CI.
-
----
-
-## M6 — Itinerary engine
-
-### Objective
-
-Build day-based itinerary with items, locks, travel times, conflicts, route-order suggestions, revisions.
-
-### User-visible outcome
-
-Calendar/day view; add/edit/reorder items; see travel gaps and conflicts; “optimise order” suggestion; revision history list.
-
-### Backend responsibilities
-
-- Itinerary + Optimisation modules.
-- TripDay, ItineraryItem, ItineraryParticipant, TripRevision.
-- Travel time via geo provider or fallback; `@roamly/itinerary-engine` for conflicts and 2-opt/heuristic order.
-- `expectedRevision` concurrency.
-
-### Frontend responsibilities
-
-- Day timeline UI, drag reorder (unlocked items), lock toggle, conflict badges.
-- Optimise button applies suggestion after confirm.
-
-### Important tests
-
-- Unit: conflict detection, locked item immobility, equal split remainder (if shared util).
-- Unit: route heuristic on small fixed coordinate sets.
-- Supertest: 409 on stale revision; revision increments on change.
-- Playwright: add items → detect conflict → optimise order.
-
-### Dependencies
-
-M5 (places/coords); M3.
-
-### Acceptance criteria
-
-- [ ] Material changes create TripRevision.
-- [ ] Optimisation documented as heuristic; UI sets expectations.
-- [ ] External routing failure still allows manual item times.
-
----
-
-## M7 — Collaboration
-
-### Objective
-
-Real-time notifications of trip changes via WebSockets after persistence; optimistic concurrency UX.
-
-### User-visible outcome
-
-Multiple browsers on same trip see updates within seconds; conflict message on stale save.
-
-### Backend responsibilities
-
-- Collaboration module: WS gateway, trip room join auth, post-commit events.
-- Event types: itinerary, places, expenses (later), generic trip updated.
-
-### Frontend responsibilities
-
-- WS client hook; Query invalidation on events.
-- Conflict toast + refetch on 409.
-
-### Important tests
-
-- Integration: mutate itinerary → WS client receives event (test gateway).
-- Supertest: WS connection rejected without membership.
-- Playwright: two contexts edit trip; second sees first’s change after refresh or WS.
-
-### Dependencies
-
-M6 (itinerary revisions as backbone).
-
-### Acceptance criteria
-
-- [ ] No WS-only writes; disconnect does not lose data.
-- [ ] Revision conflict path covered in E2E.
-
----
-
-## M8 — Wallet
-
-### Objective
-
-Trip expenses, equal/custom splits, net balances, suggested settlements (informational).
-
-### User-visible outcome
-
-Add expense, assign participants, see who owes whom; mark settlement suggested/paid locally.
-
-### Backend responsibilities
-
-- Expenses module: Expense, ExpenseParticipant, Settlement computation job or sync on write.
-
-### Frontend responsibilities
-
-- Expense list, create form, split mode, balances summary, settlement list.
-
-### Important tests
-
-- Unit: settlement algorithm edge cases (0, single payer, remainder).
-- Supertest: custom split must sum to total; currency matches trip default.
-- Playwright: two expenses → balances match manual spreadsheet.
+- **Backend:** `@roamly/geo-contracts`; Geo module with Geoapify adapter + **StubGeoProvider**; cache layer; Places module (Place, SavedPlace). No business imports of vendor SDK outside adapter.
+- **Frontend:** MapLibre component; degraded UI when provider errors.
 
 ### Dependencies
 
@@ -304,8 +175,119 @@ M3.
 
 ### Acceptance criteria
 
-- [ ] All money in minor integer units.
-- [ ] No payment gateway integration.
+- [ ] CI uses stub provider only.
+- [ ] Non-member cannot save places.
+- [ ] Trip workspace loads without live geo calls.
+
+### Testing expectations
+
+- Unit: stub fixtures; cache key behavior.
+- Supertest: save place upserts canonical Place + SavedPlace.
+- Playwright: mocked search → save → list (or stub-backed E2E).
+
+---
+
+## M6 — Itinerary engine
+
+### Objective
+
+Day-based itinerary with travel times, conflicts, heuristic route order, **revision history**, and **optimistic concurrency**.
+
+### Scope
+
+- Trip days and items; locks; participants; optimise order suggestion; revision list.
+- User-visible: timeline/day view, conflict badges, optimise confirm flow.
+
+### Important engineering work
+
+- **Backend:** Itinerary + Optimisation modules. Transaction: mutate + `TripRevision` + increment `Trip.itineraryRevisionNumber`. Require `expectedRevision`; 409 on stale. Travel time via geo or fallback; engine for conflicts/heuristics. Optional BullMQ job for routing matrix when Redis enabled.
+- **Frontend:** Drag reorder (unlocked), lock toggle, display heuristic limitations.
+
+### Dependencies
+
+M3, M5.
+
+### Acceptance criteria
+
+- [ ] Material changes append TripRevision and bump trip revision in one transaction.
+- [ ] Stale `expectedRevision` returns 409 with current revision.
+- [ ] Routing failure still allows manual scheduling.
+- [ ] Optimisation does not move locked items.
+
+### Testing expectations
+
+- Unit: conflict detection; route heuristic golden sets; locked item tests.
+- Supertest: concurrent mutate → one success one 409.
+- Playwright: add items → conflict shown → optimise order.
+
+---
+
+## M7 — Collaboration
+
+### Objective
+
+Real-time trip updates via WebSockets **after DB commit**; revision-aware client UX.
+
+### Scope
+
+- Multi-client refresh; conflict toasts on 409.
+- User-visible: second browser sees changes without manual refresh (when connected).
+
+### Important engineering work
+
+- **Backend:** Collaboration module — WS gateway, `trip:{id}` rooms, session auth on connect, membership check. Emit events post-commit only. Single API instance (no Redis adapter yet).
+- **Frontend:** WS hook + TanStack Query invalidation; 409 refetch path.
+
+### Dependencies
+
+M6.
+
+### Acceptance criteria
+
+- [ ] No WebSocket-only persistence.
+- [ ] Events include `itineraryRevisionNumber` for itinerary changes.
+- [ ] Non-member cannot join room.
+
+### Testing expectations
+
+- Integration: mutate → WS client receives event after commit.
+- Supertest/WS: reject unauthenticated or non-member.
+- Playwright: two contexts; edit propagates or 409 handled.
+
+---
+
+## M8 — Wallet
+
+### Objective
+
+Shared expenses, splits, net balances, and settlement suggestions (informational, not payments).
+
+### Scope
+
+- Add/edit expenses, equal/custom splits, balance summary, mark settlements.
+- User-visible: expense list, create form, who owes whom.
+
+### Important engineering work
+
+- **Backend:** Expenses module; minor-unit storage; settlement recompute in transaction; optional Idempotency-Key on create.
+- **Frontend:** Split mode UI, balances panel.
+- **Engine:** settlement reduction in `@roamly/itinerary-engine` or shared pure util with tests.
+
+### Dependencies
+
+M3.
+
+### Acceptance criteria
+
+- [ ] All amounts integer minor units; custom splits sum to total.
+- [ ] No payment gateway.
+- [ ] Settlement algorithm documented and unit-tested.
+
+### Testing expectations
+
+- Unit: remainder assignment edge cases.
+- Supertest: invalid split rejected; idempotency replay (if implemented).
+- Playwright: two expenses → balances match spreadsheet.
 
 ---
 
@@ -313,34 +295,32 @@ M3.
 
 ### Objective
 
-Manual booking records linked to itinerary; file uploads with trip-scoped access.
+Manual bookings (with **confirmed** flag for replan rules) and file uploads via **storage abstraction**.
 
-### User-visible outcome
+### Scope
 
-Add booking with confirmation code; attach PDF; link booking to itinerary item.
+- Booking CRUD linked to itinerary items; upload/download documents.
+- User-visible: booking form, file list, secure download.
 
-### Backend responsibilities
+### Important engineering work
 
-- Bookings, Files modules; storage adapter (local dev).
-- FileAsset metadata; signed URL or proxied download with guard.
-
-### Frontend responsibilities
-
-- Booking CRUD UI; file upload component; document list.
-
-### Important tests
-
-- Supertest: non-member cannot download; file size limit enforced.
-- Playwright: upload file → visible to another member on same trip.
+- **Backend:** Bookings module with `isConfirmed`. Files module — **LocalStorageAdapter**, FileAsset metadata, proxied download with membership guard. Upload transaction: DB row then stream; rollback on failure.
+- **Frontend:** Upload component, booking UI.
 
 ### Dependencies
 
-M6 (optional link to item); M3.
+M3; M6 for optional item link.
 
 ### Acceptance criteria
 
-- [ ] Confirmed bookings referenced in replanning rules (prep for M11).
-- [ ] Storage keys not exposed without auth.
+- [ ] Confirmed bookings documented for M11 protection.
+- [ ] Binaries not stored in PostgreSQL.
+- [ ] Non-member cannot download.
+
+### Testing expectations
+
+- Supertest: size/type limits; auth on download.
+- Playwright: member uploads; other member can download.
 
 ---
 
@@ -348,35 +328,32 @@ M6 (optional link to item); M3.
 
 ### Objective
 
-Travel-day command center for active trips: today’s schedule, quick navigation, check-off optional.
+Travel-day command center for **active** trips.
 
-### User-visible outcome
+### Scope
 
-“Today” tab when trip status active; highlights current/next item; links to map and bookings.
+- Today schedule, next item, links to map/bookings; optional check-off.
+- User-visible: “Today” tab when trip active; mobile-friendly layout.
 
-### Backend responsibilities
+### Important engineering work
 
-- LiveTrip module: read models aggregating today’s ItineraryItem, bookings, timezone-aware “now”.
-
-### Frontend responsibilities
-
-- Live trip dashboard; mobile-friendly layout.
-- Status transition planning → active → completed (organizer).
-
-### Important tests
-
-- Unit: timezone boundary for “today”.
-- Supertest: only active trip members access live endpoints.
-- Playwright: set trip active → today view shows correct day items.
+- **Backend:** LiveTrip read service; timezone-aware “today”; gate by trip status active.
+- **Frontend:** Live dashboard; organizer status transitions planning → active → completed.
 
 ### Dependencies
 
-M6, M9 recommended.
+M6; M9 recommended.
 
 ### Acceptance criteria
 
-- [ ] Works offline from live routing (read cached itinerary).
-- [ ] Trip status gates live features.
+- [ ] Does not require live routing provider.
+- [ ] Only members of active trip access live endpoints.
+
+### Testing expectations
+
+- Unit: timezone boundary for today.
+- Supertest: inactive trip denied.
+- Playwright: activate trip → today shows correct items.
 
 ---
 
@@ -384,35 +361,33 @@ M6, M9 recommended.
 
 ### Objective
 
-Disruption input → affected items → proposal with alternatives → organizer approval → new revision.
+Disruption → affected activities → **versioned proposal** → **organizer approval** → transactional apply.
 
-### User-visible outcome
+### Scope
 
-Report delay/closure; review proposal diff; approve or reject; itinerary updates on approve.
+- Report delay/closure; review diff; approve/reject.
+- Preserve **confirmed bookings** and **locked** itinerary items.
 
-### Backend responsibilities
+### Important engineering work
 
-- Replanning module: rules in itinerary-engine; ReplanningProposal lifecycle; apply patch transactionally.
-- Respect locked items and bookings.
-
-### Frontend responsibilities
-
-- Disruption form; proposal review UI (side-by-side or diff list); approve/reject actions.
-
-### Important tests
-
-- Unit: affected set detection; booking preservation.
-- Supertest: approve applies revision; reject leaves revision unchanged.
-- Playwright: propose → approve → itinerary reflects change.
+- **Backend:** Replanning module; engine for affected set and alternatives; ReplanningProposal tied to `baseRevisionNumber`; approve in one transaction with revision bump. Optional BullMQ for heavy analysis.
+- **Frontend:** Proposal review and approval UI.
 
 ### Dependencies
 
-M6, M9; M5 for alternatives search when geo available.
+M6, M9; M5 for geo-backed alternatives when available.
 
 ### Acceptance criteria
 
-- [ ] No auto-apply without approval.
-- [ ] Proposal tied to `baseRevisionNumber`.
+- [ ] No auto-apply without organizer approval.
+- [ ] Confirmed bookings not silently moved by proposal apply.
+- [ ] Reject leaves revision unchanged.
+
+### Testing expectations
+
+- Unit: affected detection; booking/lock preservation.
+- Supertest: approve bumps revision; reject does not.
+- Playwright: full propose → approve flow.
 
 ---
 
@@ -420,37 +395,35 @@ M6, M9; M5 for alternatives search when geo available.
 
 ### Objective
 
-Post-trip memories; template export from completed trip; production hardening and release checklist.
+Post-trip memories, trip templates, production hardening, and **deployment documentation**.
 
-### User-visible outcome
+### Scope
 
-Memory journal on completed trip; duplicate trip as template (structure without personal expenses); deployed prod environment.
+- Memory journal; clone trip structure to template; production release checklist.
+- User-visible: memories UI, create trip from template.
+- **Create `docs/DEPLOY.md`** (detailed hosting, migrations, secrets, TLS, storage) — production provider choices made here, not before.
 
-### Backend responsibilities
+### Important engineering work
 
-- Memories module: TripMemory CRUD; template clone service (trip + days + item skeleton, not members/expenses).
-- Production env docs; optional Redis if queue adopted; migration strategy.
-
-### Frontend responsibilities
-
-- Memories UI; “Save as template” / “Create trip from template”.
-- Error boundaries, basic analytics hook placeholder (no vendor required).
-
-### Important tests
-
-- Full Playwright regression suite (critical paths M3–M11 subset).
-- Load smoke optional (not full performance test).
+- **Backend:** Memories module; template clone rules (exclude members, expenses, personal files). Production storage adapter implementation when vendor chosen. Redis/BullMQ if async features enabled. Security checklist execution.
+- **Frontend:** Memories, template flows, error boundaries.
+- **Ops:** DEPLOY.md; dependency audit; rate limits verified.
 
 ### Dependencies
 
-M3–M11 per feature scope.
+M3–M11 per included features.
 
 ### Acceptance criteria
 
-- [ ] Completed trip can be archived with memories.
-- [ ] Template clone documented (what copies, what excludes).
-- [ ] Production deployment runbook in README or docs/DEPLOY.md (optional file — **DECISION NEEDED** if separate doc).
-- [ ] Security checklist: HTTPS, secrets, rate limits, dependency audit.
+- [ ] Completed/archived trips support memories.
+- [ ] Template clone scope documented (included/excluded entities).
+- [ ] `docs/DEPLOY.md` exists with no premature vendor lock-in before this milestone.
+- [ ] Playwright regression covers critical paths.
+
+### Testing expectations
+
+- Playwright regression suite (M3–M11 subset).
+- Optional load smoke; not a full perf program.
 
 ---
 
@@ -478,14 +451,17 @@ flowchart LR
 
 ## Cross-milestone quality bar
 
-| Concern | When introduced |
-|---------|-----------------|
-| Membership guards | M3+ all trip routes |
-| Shared Zod schemas | M3+ |
-| itinerary-engine unit tests | M4, M6, M11 |
-| Playwright critical path | M3 smoke; expands each milestone |
-| Geo stub in CI | M5+ |
+| Concern | First enforced |
+|---------|----------------|
+| Trip membership guards | M3+ |
+| Shared Zod contracts | M3+ |
+| itinerary-engine unit tests | M4, M6, M8, M11 |
+| Recommendation snapshots | M4 |
+| `expectedRevision` / 409 | M6 |
+| Post-commit WS | M7 |
+| Storage abstraction | M9 |
+| DEPLOY.md | M12 |
 
 ---
 
-*Related documents: [PRODUCT_SPEC.md](./PRODUCT_SPEC.md), [ARCHITECTURE.md](./ARCHITECTURE.md), [ENGINEERING_DECISIONS.md](./ENGINEERING_DECISIONS.md)*
+*Related: [PRODUCT_SPEC.md](./PRODUCT_SPEC.md), [ARCHITECTURE.md](./ARCHITECTURE.md), [ENGINEERING_DECISIONS.md](./ENGINEERING_DECISIONS.md), [../IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md)*

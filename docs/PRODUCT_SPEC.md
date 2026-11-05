@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Roamly** is a collaborative group travel planning and management platform. Groups use a single shared workspace to plan, coordinate, manage, and adapt trips together—from early preference gathering through travel day and post-trip memories.
+**Roamly** is a collaborative travel intelligence and planning platform. Groups use a single shared workspace to plan, coordinate, manage, and adapt trips together—from early preference gathering through travel day and post-trip memories.
 
 Roamly is **not** an airline booking marketplace or payment processor. Reservations and payments are tracked and managed in the product; actual booking with external merchants is initially **manual entry** by trip members.
 
@@ -35,6 +35,7 @@ These three capabilities differentiate Roamly and drive core product and enginee
 - Combine **hard constraints** (must avoid, budget caps, date windows) with **soft preferences** (climate, pace, interests).
 - Score each member’s fit to a destination candidate and aggregate into **group satisfaction** with attention to **fairness** (no single member always overridden).
 - Present **ranked results with explanations** (which constraints matched, who is least satisfied and why)—not opaque scores.
+- **Persist recommendation snapshots** (algorithm version, preference inputs, scores, timestamp) so rankings are auditable and comparable over time.
 
 ### 2. Constraint-aware itinerary planning and route optimisation
 
@@ -51,9 +52,9 @@ These three capabilities differentiate Roamly and drive core product and enginee
 
 - **Organizer** — Creates trip, invites members, may lock decisions and manage roles.
 - **Member** — Contributes preferences, votes, edits itinerary, logs expenses.
-- **Viewer** (optional role) — Read-only access for stakeholders who should not edit.
+- **Viewer** — Read-only access to the trip workspace.
 
-Exact role names and permissions are defined in architecture; initial release focuses on organizer vs. member with viewer as a later refinement if needed.
+Role permissions (organizer, member, viewer) are defined in [ARCHITECTURE.md](./ARCHITECTURE.md) and enforced server-side on every trip route.
 
 ## Domain areas and responsibilities
 
@@ -61,8 +62,9 @@ Each domain maps to a bounded area of product behavior and (later) a NestJS modu
 
 ### Authentication and users — **foundational**
 
-- Registration, login, session management, profile basics (display name, avatar optional).
-- Password or OAuth strategy deferred to engineering decisions; users are global, not trip-scoped.
+- Registration, login, logout, server-side **session** management (HTTP-only cookie), profile basics (display name, avatar optional).
+- **Authentication** (who you are) is separate from **authorization** (trip membership and role); see architecture.
+- OAuth deferred; users are global, not trip-scoped.
 
 ### Trips and memberships — **foundational**
 
@@ -83,7 +85,7 @@ Each domain maps to a bounded area of product behavior and (later) a NestJS modu
 ### Destination discovery and scoring — **later (M4)**
 
 - **DestinationCandidate** records options under consideration; polls and votes.
-- Compatibility engine: individual scores, group aggregate, explainable ranking.
+- Compatibility engine: individual scores, group aggregate, explainable ranking; **RecommendationSnapshot** history.
 
 ### Places and maps — **later (M5)**
 
@@ -108,7 +110,8 @@ Each domain maps to a bounded area of product behavior and (later) a NestJS modu
 
 ### Bookings and files — **later (M9)**
 
-- **Booking** records (manual); **FileAsset** storage metadata and trip-scoped access.
+- **Booking** records (manual); **confirmed** bookings protected from automated replan moves.
+- **FileAsset** storage metadata and trip-scoped access via storage abstraction (local dev first).
 
 ### Live trip — **later (M10)**
 
@@ -138,7 +141,7 @@ Each domain maps to a bounded area of product behavior and (later) a NestJS modu
 
 - **Availability**: Saved trip data readable even when external map/routing APIs are down (degraded discovery/optimisation only).
 - **Security**: Every trip API enforces membership and role on the server.
-- **Auditability**: Material itinerary changes versioned; expense and settlement calculations reproducible from stored splits.
+- **Auditability**: Material itinerary changes versioned (`Trip.itineraryRevisionNumber` + revision history); recommendation snapshots persisted; expense and settlement calculations reproducible from stored splits.
 - **Performance**: Interactive planning targets sub-second reads for trip workspace; routing/geocoding may be slower and cacheable.
 
 ## Success metrics (product, post-launch orientation)
@@ -154,11 +157,12 @@ These metrics inform later iterations; they do not block milestone acceptance in
 | Term | Meaning |
 |------|---------|
 | Trip workspace | All trip-scoped data and UI for one trip |
-| Revision | Monotonic version of itinerary (and related) state |
+| Revision | Monotonic `itineraryRevisionNumber` on Trip plus TripRevision history rows |
+| Recommendation snapshot | Persisted ranking run with algorithm version and score breakdown |
 | Locked item | Itinerary item excluded from automatic reorder/replan |
 | Proposal | Suggested itinerary change set awaiting approval |
 | Provider abstraction | Interface for geocode, places, routing with swappable implementation |
 
 ---
 
-*Related documents: [ARCHITECTURE.md](./ARCHITECTURE.md), [ROADMAP.md](./ROADMAP.md), [ENGINEERING_DECISIONS.md](./ENGINEERING_DECISIONS.md)*
+*Related documents: [ARCHITECTURE.md](./ARCHITECTURE.md), [ROADMAP.md](./ROADMAP.md), [ENGINEERING_DECISIONS.md](./ENGINEERING_DECISIONS.md), [../README.md](../README.md), [../IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md)*

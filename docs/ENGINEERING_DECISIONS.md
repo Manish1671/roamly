@@ -1,149 +1,204 @@
 # Roamly — Engineering Decisions
 
-This document records **final or provisional** technical choices for Roamly. Provisional items are marked **DECISION NEEDED** and listed in the completion review.
+Authoritative technical choices for implementation. Items marked **deferred** are intentionally unset until a later milestone.
 
 ## Monorepo and package management
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Repository layout | **pnpm workspace monorepo** | Shared types, test utilities, and optional `@roamly/itinerary-engine` package without publishing |
-| Package manager | **pnpm** | Efficient disk use, strict dependency graph, common in TS monorepos |
+| Repository layout | **pnpm workspace monorepo** | Shared types, pure algorithms, geo contracts without publishing |
+| Package manager | **pnpm** | Strict dependency graph, efficient installs |
 
-**Proposed workspace packages (names provisional):**
+**Workspace packages:**
 
-- `apps/web` — Next.js App Router frontend
-- `apps/api` — NestJS REST (+ WebSocket gateway later)
-- `packages/shared` — Zod schemas, DTO types, constants shared by web and api
-- `packages/itinerary-engine` — Pure TS: scoring helpers, conflict detection, route-order heuristics (no Nest imports)
-- `packages/geo-contracts` — Provider interfaces + DTOs for geocode/places/routing (implementations in api)
-
-No packages installed in the architecture phase; structure applied in **M2 Project foundation**.
+| Package | Purpose |
+|---------|---------|
+| `apps/web` | Next.js App Router frontend |
+| `apps/api` | NestJS modular monolith (REST + WebSocket gateway) |
+| `packages/shared` | Zod schemas, DTO types, enums, API error codes |
+| `packages/itinerary-engine` | Pure TS: destination scoring, conflicts, route heuristics, settlement math |
+| `packages/geo-contracts` | Provider-neutral interfaces and DTOs (implementations live in `apps/api`) |
 
 ## Frontend stack
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Framework | **Next.js App Router** | SSR/SSG where useful, colocated routes, industry standard |
-| Language | **TypeScript** | End-to-end typing with shared package |
-| Styling | **Tailwind CSS** | Utility-first, fast iteration |
-| Components | **shadcn/ui** | Accessible primitives, owned source in repo |
-| Server state | **TanStack Query** | Cache, retries, optimistic patterns with revision headers |
-| Forms | **React Hook Form + Zod** | Shared schemas with backend validation |
-| Maps | **MapLibre GL JS** | Open renderer; tiles/sources configured per environment |
+| Decision | Choice |
+|----------|--------|
+| Framework | Next.js App Router |
+| Language | TypeScript |
+| Styling | Tailwind CSS |
+| Components | shadcn/ui |
+| Server state | TanStack Query |
+| Forms | React Hook Form + Zod (shared with API) |
+| Maps | MapLibre GL JS |
 
 ## Backend stack
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Framework | **NestJS** | Modular monolith, DI, guards, WebSocket support |
-| API style | **REST** first | Predictable CRUD and command endpoints; OpenAPI later optional |
-| Real-time | **WebSockets** (Nest gateway) | Trip rooms; events reflect **after** DB persistence |
-| Language | **TypeScript** | Shared types with frontend |
-| ORM | **Prisma** | PostgreSQL-first, migrations, type-safe client |
-| Database | **PostgreSQL** | Source of truth, JSONB for provider payloads where needed |
+| Decision | Choice |
+|----------|--------|
+| Framework | NestJS modular monolith |
+| API | REST initially |
+| Real-time | WebSockets (trip rooms); events **after** DB commit |
+| Language | TypeScript |
+| ORM | Prisma |
+| Database | PostgreSQL (source of truth) |
 
-## Maps and geo providers
+## Authentication (final)
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Initial provider candidate | **Geoapify** | Geocoding, places, routing in one vendor; free tier for development |
-| Integration pattern | **Provider abstraction** in `packages/geo-contracts`; implementation `GeoapifyGeoProvider` in api | Business logic depends on interfaces only |
-| Failure mode | **Null/stub provider** + cached results | Trips remain accessible; map features degrade gracefully |
-| Paid API assumption | **None** | Development and CI use mocks, recorded fixtures, or stub provider |
+| Decision | Choice |
+|----------|--------|
+| Model | **Server-side sessions** |
+| Session token | Cryptographically random; sent to client once |
+| Persistence | **Hashed token only** in PostgreSQL (`Session.tokenHash`) |
+| Transport | **HTTP-only, Secure** cookie (SameSite=Lax or Strict per CSRF strategy) |
+| Lifetime | Configurable expiration; **revocation** via session delete / logout-all |
+| Passwords | **Argon2id** (or bcrypt) — never store plaintext |
+| CSRF | Required for cookie-based mutating requests (double-submit or synchronizer token) |
+| Origin | Trusted-origin validation on auth and mutation endpoints |
+| OAuth | **Deferred** post-M3 |
 
-**Abstraction surface (conceptual):**
+**Authentication vs authorization:** Authentication establishes *who* the user is (session → `User`). Authorization decides *what* they may do (trip **TripMember** role, route-level `@Roles()`). Never infer trip access from client-supplied `userId`.
 
-- `geocode(query, bounds?) → GeoPoint[]`
-- `reverseGeocode(point) → Address`
-- `searchPlaces(query, near, categories?) → PlaceResult[]`
-- `route(waypoints, profile) → RouteLeg[]` (duration, distance, polyline optional)
+## Authorization and RBAC (final)
 
-Credentials via environment variables only; never committed.
+| Role | Typical permissions |
+|------|---------------------|
+| **organizer** | Trip settings, invitations, role changes, replan approval, status transitions, all member capabilities |
+| **member** | Preferences, votes, itinerary edit (if trip policy allows), expenses, bookings, files |
+| **viewer** | Read-only trip workspace |
 
-## Async processing and cache
+Enforcement: Nest guards — `SessionAuthGuard` → `TripMembershipGuard` → `TripRolesGuard` where needed. **Every** trip-scoped route loads membership from DB; no trip id-only trust.
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Redis | **Introduce only when justified** | e.g. BullMQ job queue for bulk routing matrix, email digests, heavy replan jobs |
-| BullMQ | **Same gate as Redis** | Not in M2–M3; evaluate at M6 (matrix prefetch) or M11 (replan batch) |
-| In-process first | **Default** | Nest `@nestjs/schedule` or synchronous request for small groups |
+## Itinerary consistency (final)
 
-## Testing
+| Decision | Choice |
+|----------|--------|
+| Current revision | **`Trip.itineraryRevisionNumber`** (integer, monotonic) |
+| Mutations | Require **`expectedRevision`** matching `Trip.itineraryRevisionNumber` |
+| Stale client | **HTTP 409 Conflict** with server revision in body |
+| History | **`TripRevision`** row created in the **same transaction** as mutation + bump |
+| Real-time | WebSocket broadcast **only after** transaction commits |
 
-| Layer | Tool | Scope |
-|-------|------|--------|
-| Unit | **Jest** | Domain services, itinerary-engine, expense math |
-| API integration | **Jest + Supertest** | Auth, membership guards, REST contracts |
-| E2E | **Playwright** | Critical flows per roadmap milestone |
+Material itinerary changes increment revision and append audit row. Read-only conflict checks do not bump revision.
 
-CI: **GitHub Actions** — lint, typecheck, unit/integration on PR; Playwright on main or nightly initially.
+## Maps and geo providers (final)
 
-## Infrastructure (development)
+| Decision | Choice |
+|----------|--------|
+| Rendering | MapLibre GL JS |
+| Contracts | `@roamly/geo-contracts` — no Nest/Prisma in package |
+| Initial provider | **Geoapify** (candidate) in `GeoProvider` adapter inside api |
+| Replaceability | Business modules depend on `GeoService` interface only |
+| Tests / CI | **Stub provider** + fixtures |
+| Degradation | Saved trips readable; search/routing/live matrix optional when provider down |
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Local dependencies | **Docker Compose** | PostgreSQL; Redis added when BullMQ adopted |
-| Production hosting | **DECISION NEEDED** | Vercel (web) + fly/railway/render (api) vs. single VPS — cost and ops tradeoff |
+Credentials: environment variables only.
 
-## Architecture style
+## Recommendation intelligence (final)
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Service topology | **Modular monolith** | One deployable API; clear module boundaries |
-| Business logic location | **Domain services** | Not in controllers; controllers validate + delegate |
-| Algorithms | **`packages/itinerary-engine` + unit tests** | Independent of HTTP and Prisma where possible |
-| AI in core rules | **Excluded** | Destination ranking and replan suggestions use deterministic rules + heuristics; optional AI summaries are out of initial scope |
-| Microservices | **Excluded** | Complexity not justified for initial product |
+| Decision | Choice |
+|----------|--------|
+| Algorithm | **Deterministic, explainable** scoring in `@roamly/itinerary-engine` |
+| Versioning | **`algorithmVersion`** string constant in engine; stored on each snapshot |
+| Persistence | **`RecommendationSnapshot`** per compute run (not ephemeral-only) |
+| Snapshot contents | `tripId`, `algorithmVersion`, `preferenceSnapshotJson`, candidate ids, `scoreBreakdownJson`, ranked order, `createdAt`, `createdById` (optional) |
+| Audit | Users can compare rankings over time as preferences change |
 
-## Security and auth (provisional)
+No ML/LLM in ranking or replan core rules.
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Session model | **Server-side sessions or JWT with refresh** | **DECISION NEEDED** — see unresolved list |
-| Password storage | **bcrypt or argon2** | Standard practice when email/password used |
-| OAuth | **Optional post-M3** | Google/Apple as convenience |
-| Authorization | **Trip membership + role guards** | Every mutating trip route checks `TripMember` |
+## File storage (final)
+
+| Decision | Choice |
+|----------|--------|
+| Abstraction | **`StorageAdapter`** interface (put, get stream, delete, exists) |
+| Development | **Local filesystem** under configurable base path |
+| PostgreSQL | **Metadata only** (`FileAsset`); no large binaries in DB |
+| Production provider | **Deferred** until M12 release planning (`docs/DEPLOY.md`) |
+
+Downloads via authenticated API proxy or short-lived signed URLs — never public guessable paths.
+
+## Async processing: Redis and BullMQ (final)
+
+| Decision | Choice |
+|----------|--------|
+| Redis | Introduced when async work justifies it (M6+ matrix prefetch, M11 replan batch, M12 digests) |
+| Queue | **BullMQ** on Redis |
+| Default | Synchronous request path until latency/cost requires queue |
+
+**Job failure and retry (when BullMQ is adopted):**
+
+- Default: **3 attempts**, exponential backoff (e.g. 1s, 4s, 16s).
+- **Idempotent job handlers** keyed by `jobId` or business idempotency key stored in PostgreSQL.
+- Permanent failure → `failed` state + structured log; optional dead-letter queue table for admin replay.
+- Jobs must not partially apply itinerary changes outside a DB transaction; prefer job output → user-triggered apply or single transactional apply step.
+
+## Real-time architecture (final)
+
+| Decision | Choice |
+|----------|--------|
+| Initial deploy | **Single API instance** |
+| WS auth | Same session as HTTP; trip room join verifies membership |
+| Events | Payload: `tripId`, `type`, `itineraryRevisionNumber` (if relevant), entity hints |
+| Scale-out | **Redis WebSocket adapter deferred** until horizontal scaling required |
+
+## Deployment (final)
+
+| Decision | Choice |
+|----------|--------|
+| Hosting selection | **Not chosen** before release phase |
+| Release artifact | **`docs/DEPLOY.md`** created in **M12** with environment, migrations, secrets, TLS |
+
+## Algorithms package (final)
+
+| Decision | Choice |
+|----------|--------|
+| Package | `@roamly/itinerary-engine` |
+| Purity | No NestJS, Prisma, HTTP, or geo provider imports |
+| Inputs/outputs | Plain objects; geo durations passed in as numbers |
+| Optimisation | Practical heuristics; limitations documented in product UI and tests |
 
 ## Money
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Storage | **Integer minor units** (e.g. cents) + ISO 4217 currency code per expense/trip default | Avoid float errors |
-| FX | **Out of scope initially** | Single currency per trip default |
+| Decision | Choice |
+|----------|--------|
+| Amounts | Integer **minor units** + ISO 4217 currency |
+| FX | Deferred — one default currency per trip |
 
-## Files and uploads
+## Testing and CI
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Storage | **Local disk dev; S3-compatible prod** | **DECISION NEEDED** on provider |
-| Metadata | **FileAsset in PostgreSQL** | Path/key, mime, size, uploader, tripId |
+| Layer | Tool |
+|-------|------|
+| Unit | Jest — engine, settlement, guards helpers |
+| API | Jest + Supertest — auth, membership, 409 revision, idempotency |
+| E2E | Playwright — milestone acceptance flows |
+| CI | GitHub Actions — lint, typecheck, unit/integration; Playwright on main or nightly |
 
-## WebSockets
+**Security test boundaries:** Supertest suites use test DB; never hit real Geoapify in CI (stub). Session cookies tested for httpOnly flags in integration tests where feasible.
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Event payload | **Entity id + revision + change type** | Clients refetch or merge via Query invalidation |
-| Source of truth | **PostgreSQL** | WS never sole persistence |
-| Scale | **Single API instance sticky sessions or Redis adapter later** | **DECISION NEEDED** before multi-instance prod |
+## Idempotency (final pattern)
 
-## Versioning and concurrency
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Itinerary versioning | **TripRevision** rows with monotonic `revisionNumber` | Audit + collaboration |
-| Optimistic concurrency | **`If-Match: revision` or body `expectedRevision`** | 409 on conflict |
-
-## External API cost control
-
-- Rate limit and cache geocode/route responses (trip-scoped TTL).
-- Batch routing matrix only for days being edited.
-- Feature flags to disable live routing in CI and demo mode.
+| Operation | Mechanism |
+|-----------|-----------|
+| Accept invitation | Unique `(tripId, userId)` membership; accept token single-use |
+| Vote | Unique `(pollId, userId)` |
+| Retryable POST | Optional `Idempotency-Key` header → store hash + response in `IdempotencyRecord` (TTL) for expenses/uploads |
+| Itinerary mutate | **`expectedRevision`** — not idempotent across versions; retries must refresh revision |
 
 ## Documentation and API contracts
 
-- Shared Zod schemas in `packages/shared` as contract source.
-- OpenAPI generation from Nest **optional** in M3+.
+- Shared Zod in `packages/shared`.
+- OpenAPI from Nest: optional M3+.
+
+## Deferred decisions (do not assume)
+
+| Topic | Status |
+|-------|--------|
+| Production file storage vendor (S3, R2, etc.) | Deferred to M12 |
+| Production hosting (web + api topology) | Deferred to M12 |
+| Redis WS adapter | Deferred until multi-instance |
+| OAuth providers | Deferred post-M3 |
+| Email notifications provider | Deferred |
+| OpenAPI publish pipeline | Optional |
 
 ---
 
-*Related documents: [ARCHITECTURE.md](./ARCHITECTURE.md), [ROADMAP.md](./ROADMAP.md), [PRODUCT_SPEC.md](./PRODUCT_SPEC.md)*
+*Related: [ARCHITECTURE.md](./ARCHITECTURE.md), [ROADMAP.md](./ROADMAP.md), [PRODUCT_SPEC.md](./PRODUCT_SPEC.md), [../IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md)*

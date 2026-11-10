@@ -6,6 +6,7 @@ import {
   fetchCsrf,
   withAuthHeaders,
 } from './auth-helpers';
+import { requirePostgres } from './require-database';
 
 const prisma = new PrismaClient();
 const origin = 'http://localhost:3000';
@@ -13,20 +14,9 @@ const emailDomain = `@m3-auth-${Date.now()}.test`;
 
 describe('Auth (e2e)', () => {
   let app: INestApplication;
-  let dbAvailable = false;
 
   beforeAll(async () => {
-    try {
-      await prisma.$queryRaw`SELECT 1`;
-      dbAvailable = true;
-    } catch {
-      dbAvailable = false;
-    }
-
-    if (!dbAvailable) {
-      return;
-    }
-
+    await requirePostgres(prisma);
     app = await createAuthTestApp();
   });
 
@@ -34,22 +24,11 @@ describe('Auth (e2e)', () => {
     if (app) {
       await app.close();
     }
-    if (dbAvailable) {
-      await prisma.user.deleteMany({ where: { email: { endsWith: emailDomain } } });
-    }
+    await prisma.user.deleteMany({ where: { email: { endsWith: emailDomain } } });
     await prisma.$disconnect();
   });
 
-  const maybeIt = (name: string, fn: () => Promise<void> | void) =>
-    it(name, async () => {
-      if (!dbAvailable || !app) {
-        console.warn('Skipping auth e2e: database unavailable');
-        return;
-      }
-      await fn();
-    });
-
-  maybeIt('registers a user, sets session cookie, and returns profile via /me', async () => {
+  it('registers a user, sets session cookie, and returns profile via /me', async () => {
     const { csrfToken, agent } = await fetchCsrf(app.getHttpServer(), origin);
     const email = `alice${emailDomain}`;
 
@@ -74,7 +53,7 @@ describe('Auth (e2e)', () => {
     expect(me.body.user.email).toBe(email);
   });
 
-  maybeIt('rejects duplicate registration', async () => {
+  it('rejects duplicate registration', async () => {
     const { csrfToken, agent } = await fetchCsrf(app.getHttpServer(), origin);
     const email = `dup${emailDomain}`;
 
@@ -92,7 +71,7 @@ describe('Auth (e2e)', () => {
       .expect(409);
   });
 
-  maybeIt('rejects invalid login credentials', async () => {
+  it('rejects invalid login credentials', async () => {
     const { csrfToken, agent } = await fetchCsrf(app.getHttpServer(), origin);
     const email = `login${emailDomain}`;
 
@@ -110,7 +89,7 @@ describe('Auth (e2e)', () => {
       .expect(401);
   });
 
-  maybeIt('logs in successfully and rejects unauthenticated /me', async () => {
+  it('logs in successfully and rejects unauthenticated /me', async () => {
     const email = `session${emailDomain}`;
     const regCsrf = await fetchCsrf(app.getHttpServer(), origin);
     await regCsrf.agent
@@ -132,7 +111,7 @@ describe('Auth (e2e)', () => {
     expect(login.body.user.email).toBe(email);
   });
 
-  maybeIt('logs out and invalidates the session', async () => {
+  it('logs out and invalidates the session', async () => {
     const email = `logout${emailDomain}`;
     const regCsrf = await fetchCsrf(app.getHttpServer(), origin);
     const agent = regCsrf.agent;
@@ -159,7 +138,7 @@ describe('Auth (e2e)', () => {
     await agent.get(`${API_PREFIX}/auth/me`).expect(401);
   });
 
-  maybeIt('rejects expired sessions', async () => {
+  it('rejects expired sessions', async () => {
     const email = `expired${emailDomain}`;
     const user = await prisma.user.create({
       data: {

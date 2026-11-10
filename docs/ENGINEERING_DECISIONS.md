@@ -58,6 +58,8 @@ Authoritative technical choices for implementation. Items marked **deferred** ar
 
 **Authentication vs authorization:** Authentication establishes *who* the user is (session → `User`). Authorization decides *what* they may do (trip **TripMember** role, route-level `@Roles()`). Never infer trip access from client-supplied `userId`.
 
+**M3 trip roles (implemented):** `OWNER | EDITOR | MEMBER | VIEWER` on `TripMembership`. The trip creator receives `OWNER` in the same transaction as trip creation. Non-members get **404** on trip-scoped API routes. Invitations are for **existing** accounts only (lookup by email); discovery is in-app (`GET /invitations`), not email delivery. Editors cannot invite members in M3; only owners invite. Archived trips are read-only and reject new invitations.
+
 ## Authorization and RBAC (final)
 
 | Role | Typical permissions |

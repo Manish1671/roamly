@@ -1,5 +1,3 @@
-// Roamly database — trip models arrive in a later milestone
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,6 +5,21 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum TripRole {
+  OWNER
+  EDITOR
+  MEMBER
+  VIEWER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+  EXPIRED
 }
 
 model User {
@@ -17,7 +30,11 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  sessions Session[]
+  sessions              Session[]
+  createdTrips          Trip[]             @relation("TripCreator")
+  tripMemberships       TripMembership[]
+  invitationsSent       TripInvitation[]   @relation("InvitationInviter")
+  invitationsReceived   TripInvitation[]   @relation("InvitationInvitee")
 
   @@map("users")
 }
@@ -35,4 +52,65 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+model Trip {
+  id              String    @id @default(uuid()) @db.Uuid
+  name            String
+  destinationName String    @map("destination_name")
+  countryCode     String?   @map("country_code") @db.VarChar(2)
+  startDate       DateTime  @map("start_date") @db.Date
+  endDate         DateTime  @map("end_date") @db.Date
+  budgetAmount    Decimal?  @map("budget_amount") @db.Decimal(12, 2)
+  budgetCurrency  String?   @map("budget_currency") @db.Char(3)
+  createdById     String    @map("created_by_id") @db.Uuid
+  archivedAt      DateTime? @map("archived_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  creator     User             @relation("TripCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships TripMembership[]
+  invitations TripInvitation[]
+
+  @@index([createdById])
+  @@index([archivedAt])
+  @@index([startDate, endDate])
+  @@map("trips")
+}
+
+model TripMembership {
+  id        String   @id @default(uuid()) @db.Uuid
+  tripId    String   @map("trip_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      TripRole
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, userId])
+  @@index([userId])
+  @@map("trip_memberships")
+}
+
+model TripInvitation {
+  id             String           @id @default(uuid()) @db.Uuid
+  tripId         String           @map("trip_id") @db.Uuid
+  invitedUserId  String           @map("invited_user_id") @db.Uuid
+  invitedEmail   String           @map("invited_email")
+  invitedById    String           @map("invited_by_id") @db.Uuid
+  intendedRole   TripRole         @map("intended_role")
+  status         InvitationStatus @default(PENDING)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  expiresAt      DateTime         @map("expires_at")
+  respondedAt    DateTime?        @map("responded_at")
+
+  trip          Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  invitedUser   User @relation("InvitationInvitee", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  invitedByUser User @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@index([invitedUserId, status])
+  @@index([expiresAt])
+  @@map("trip_invitations")
 }

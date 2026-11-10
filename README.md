@@ -133,7 +133,7 @@ pnpm format
 
 ## CI
 
-GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pushes and PRs to `main`: install, lint, typecheck, test, and build. No database service is required for CI (health tests mock Prisma).
+GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pushes and PRs to `main`: install, Prisma generate, **migrate deploy**, lint, typecheck, test, and build. A **PostgreSQL 16** service container backs auth and trip integration tests. Health e2e still mocks Prisma when checking liveness only.
 
 ## Authentication (M3 / 3A)
 
@@ -141,8 +141,35 @@ Session-based auth is implemented: register, login, logout, and `GET /auth/me`. 
 
 Web routes: `/register`, `/login`, `/dashboard`.
 
+## Trip management (M3 / 3B)
+
+Collaborative trips, membership roles, and in-app invitations (registered users only; no outbound email).
+
+All routes are under `/api/v1`, session-authenticated. Mutations also require CSRF + trusted `Origin` (same as auth).
+
+| Area | Method | Path |
+|------|--------|------|
+| Trips | `POST` | `/trips` |
+| | `GET` | `/trips` |
+| | `GET` | `/trips/:tripId` |
+| | `PATCH` | `/trips/:tripId` |
+| | `POST` | `/trips/:tripId/archive` |
+| Members | `GET` | `/trips/:tripId/members` |
+| | `PATCH` | `/trips/:tripId/members/:userId` |
+| | `DELETE` | `/trips/:tripId/members/:userId` |
+| Invitations | `POST` | `/trips/:tripId/invitations` |
+| | `GET` | `/trips/:tripId/invitations` |
+| | `GET` | `/invitations` (current user’s inbox) |
+| | `POST` | `/invitations/:invitationId/accept` |
+| | `POST` | `/invitations/:invitationId/decline` |
+| | `POST` | `/trips/:tripId/invitations/:invitationId/revoke` |
+
+Web routes: `/dashboard` (trip buckets + pending invites), `/trips/new`, `/trips/[tripId]`.
+
+Apply migration `20251110180000_trip_membership_invitations` after pulling (`pnpm --filter @roamly/api exec prisma migrate deploy`).
+
 ## Current milestone
 
-**M3 — Authentication (3A)** is implemented. Trip management and invitations follow in the next M3 work.
+**M3 — Authentication and trip management** is implemented (3A + 3B).
 
 See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed progress.

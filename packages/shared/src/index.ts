@@ -1,3 +1,5 @@
+export * from './auth';
+
 export const ROAMLY_APP_NAME = 'Roamly' as const;
 
 export const API_PREFIX = '/api/v1' as const;

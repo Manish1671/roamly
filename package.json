@@ -11,6 +11,7 @@
     "prebuild": "pnpm --filter @roamly/shared --filter @roamly/geo-contracts --filter @roamly/itinerary-engine run build",
     "build": "pnpm -r run build",
     "lint": "pnpm -r run lint",
+    "pretypecheck": "pnpm --filter @roamly/shared run build",
     "typecheck": "pnpm -r run typecheck",
     "pretest": "pnpm --filter @roamly/shared --filter @roamly/geo-contracts --filter @roamly/itinerary-engine run build",
     "test": "pnpm -r run test",

@@ -1,14 +1,25 @@
 import { ROAMLY_APP_NAME } from '@roamly/shared';
+import { AuthHeader } from '@/components/auth-header';
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  showMarketingHeader = false,
+}: {
+  children: React.ReactNode;
+  showMarketingHeader?: boolean;
+}) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b border-roamly-stone/80 bg-roamly-canvas/95 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-          <BrandMark />
-          <p className="text-sm text-roamly-navy/60">Foundation preview · M2</p>
-        </div>
-      </header>
+      {showMarketingHeader ? (
+        <header className="border-b border-roamly-stone/80 bg-roamly-canvas/95 backdrop-blur">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
+            <BrandMark />
+            <p className="text-sm text-roamly-navy/60">Plan together, travel smarter</p>
+          </div>
+        </header>
+      ) : (
+        <AuthHeader />
+      )}
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 sm:px-6">
         {children}
       </main>

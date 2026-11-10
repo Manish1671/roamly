@@ -69,6 +69,9 @@ pnpm install
 | `API_PORT` | NestJS listen port (default `3001`) |
 | `CORS_ORIGINS` | Allowed browser origins (comma-separated) |
 | `NEXT_PUBLIC_API_URL` | Web app API base URL |
+| `SESSION_SECRET` | ≥32 chars; hashes session tokens server-side |
+| `SESSION_TTL_HOURS` | Session lifetime (default `168`) |
+| `COOKIE_SECURE` | Set `true` in production behind HTTPS |
 
 ## Start PostgreSQL
 
@@ -132,8 +135,14 @@ pnpm format
 
 GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pushes and PRs to `main`: install, lint, typecheck, test, and build. No database service is required for CI (health tests mock Prisma).
 
+## Authentication (M3 / 3A)
+
+Session-based auth is implemented: register, login, logout, and `GET /auth/me`. The API sets an HTTP-only `roamly_session` cookie; mutating routes require a CSRF token from `GET /auth/csrf` plus a trusted `Origin`.
+
+Web routes: `/register`, `/login`, `/dashboard`.
+
 ## Current milestone
 
-**M2 — Project foundation** delivers the monorepo shell, health endpoint, Prisma wiring, and shared packages. Authentication and trip features begin in **M3**.
+**M3 — Authentication (3A)** is implemented. Trip management and invitations follow in the next M3 work.
 
 See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed progress.

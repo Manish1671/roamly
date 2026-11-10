@@ -1,4 +1,5 @@
 import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
+import { Public } from '../auth/public.decorator';
 import { ConfigService } from '@nestjs/config';
 import type { EnvConfig } from '../config/env.schema';
 import { HealthService } from './health.service';
@@ -10,6 +11,7 @@ export class HealthController {
     private readonly config: ConfigService<EnvConfig, true>,
   ) {}
 
+  @Public()
   @Get()
   @HttpCode(HttpStatus.OK)
   async getHealth() {

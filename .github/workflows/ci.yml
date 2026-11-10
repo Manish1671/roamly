@@ -37,6 +37,7 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @roamly/api exec prisma generate
         env:
+          SESSION_SECRET: 0123456789012345678901234567890123456789012345678901234567890
           DATABASE_URL: postgresql://roamly:roamly@localhost:5432/roamly?schema=public
 
       - name: Lint
@@ -48,6 +49,7 @@ jobs:
       - name: Test
         run: pnpm test
         env:
+          SESSION_SECRET: 0123456789012345678901234567890123456789012345678901234567890
           DATABASE_URL: postgresql://roamly:roamly@localhost:5432/roamly?schema=public
           NODE_ENV: test
           API_PORT: 3001
@@ -56,5 +58,6 @@ jobs:
       - name: Build
         run: pnpm build
         env:
+          SESSION_SECRET: 0123456789012345678901234567890123456789012345678901234567890
           DATABASE_URL: postgresql://roamly:roamly@localhost:5432/roamly?schema=public
           NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1

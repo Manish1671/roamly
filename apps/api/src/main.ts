@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
 import { API_PREFIX } from '@roamly/shared';
 import { AppModule } from './app.module';
 import type { EnvConfig } from './config/env.schema';
@@ -21,6 +22,7 @@ async function bootstrap() {
     .filter(Boolean);
 
   app.setGlobalPrefix(API_PREFIX.replace(/^\//, ''));
+  app.use(cookieParser());
   app.enableCors({
     origin: origins.length > 0 ? origins : true,
     credentials: true,

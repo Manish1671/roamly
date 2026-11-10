@@ -6,6 +6,12 @@ export const envSchema = z.object({
   API_PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+  SESSION_TTL_HOURS: z.coerce.number().int().positive().default(168),
+  COOKIE_SECURE: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

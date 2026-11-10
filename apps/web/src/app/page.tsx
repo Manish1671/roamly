@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { AppShell } from '@/components/app-shell';
 
 const pillars = [
@@ -17,7 +18,7 @@ const pillars = [
 
 export default function HomePage() {
   return (
-    <AppShell>
+    <AppShell showMarketingHeader>
       <section className="grid gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
         <div className="space-y-6">
           <p className="inline-flex rounded-full border border-roamly-teal/30 bg-white/60 px-3 py-1 text-xs font-medium text-roamly-teal">
@@ -31,9 +32,12 @@ export default function HomePage() {
             workspace—built for explainable decisions and practical schedules.
           </p>
           <div className="flex flex-wrap gap-3">
-            <span className="rounded-lg bg-roamly-navy px-5 py-2.5 text-sm font-medium text-white shadow-soft">
-              Dashboard coming in M3
-            </span>
+            <Link
+              href="/register"
+              className="rounded-lg bg-roamly-navy px-5 py-2.5 text-sm font-medium text-white shadow-soft hover:bg-roamly-navy/90"
+            >
+              Get started
+            </Link>
             <span className="rounded-lg border border-roamly-stone bg-white/70 px-5 py-2.5 text-sm font-medium text-roamly-navy/80">
               Documentation in /docs
             </span>

@@ -1,0 +1,28 @@
+{
+  "name": "roamly",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "pnpm run --parallel --filter @roamly/web --filter @roamly/api dev",
+    "prebuild": "pnpm --filter @roamly/shared --filter @roamly/geo-contracts --filter @roamly/itinerary-engine run build",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "pretest": "pnpm --filter @roamly/shared --filter @roamly/geo-contracts --filter @roamly/itinerary-engine run build",
+    "test": "pnpm -r run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,css}\"",
+    "db:generate": "pnpm --filter @roamly/api exec prisma generate",
+    "db:migrate": "pnpm --filter @roamly/api exec prisma migrate dev",
+    "db:push": "pnpm --filter @roamly/api exec prisma db push",
+    "db:studio": "pnpm --filter @roamly/api exec prisma studio"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  }
+}

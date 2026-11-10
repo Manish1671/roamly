@@ -1,10 +1,10 @@
 # Roamly — Implementation Status
 
-Tracks milestone progress against [docs/ROADMAP.md](docs/ROADMAP.md). Application implementation milestones **M2–M12** are **NOT STARTED** until explicitly updated here.
+Tracks milestone progress against [docs/ROADMAP.md](docs/ROADMAP.md).
 
-**Last verified Git checkpoint:** `9d3b4750b6449696baf69e1c3253e30b3c3e3f22` — `chore: initialise Roamly project documentation`
+**Last verified Git checkpoint:** `9d3b4750b6449696baf69e1c3253e30b3c3e3f22` — documentation only (pre-M2 implementation commit **pending user action**)
 
-**Last status review:** 2026-11-05 (documentation blueprint finalisation)
+**Last status review:** 2026-11-10 (M2 implementation)
 
 ---
 
@@ -13,7 +13,7 @@ Tracks milestone progress against [docs/ROADMAP.md](docs/ROADMAP.md). Applicatio
 | ID | Milestone | Status |
 |----|-----------|--------|
 | M1 | Product definition and architecture | **COMPLETE** |
-| M2 | Project foundation | **NOT STARTED** |
+| M2 | Project foundation | **COMPLETE** — verify Docker/Postgres on your machine (see limitations) |
 | M3 | Authentication and trip management | **NOT STARTED** |
 | M4 | Group intelligence | **NOT STARTED** |
 | M5 | Maps and location discovery | **NOT STARTED** |
@@ -31,166 +31,71 @@ Tracks milestone progress against [docs/ROADMAP.md](docs/ROADMAP.md). Applicatio
 
 **Status:** COMPLETE
 
-**Completed work:**
+**Completed work:** Product and technical documentation under `docs/`.
 
-- Product spec, architecture, engineering decisions, and roadmap authored.
-- Blueprint finalised: server-side sessions, trip itinerary revision concurrency, recommendation snapshots, storage abstraction, geo stub, single-instance WS, deferred production hosting.
-- Root `README.md` and this status file added.
-
-**Pending work:** None for M1.
-
-**Blockers:** None.
+**Pending work:** None.
 
 ---
 
 ## M2 — Project foundation
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (implementation); **Git commit/push pending user action**
 
-**Completed work:** None.
+### Delivered components
 
-**Pending work:**
+| Area | Path / artifact |
+|------|-----------------|
+| Monorepo root | `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `tsconfig.base.json`, `.prettierrc` |
+| Frontend | `apps/web` — Next.js 15 App Router, Tailwind, TanStack Query shell, landing UI |
+| Backend | `apps/api` — NestJS Config (Zod validation), health at `/api/v1/health`, CORS, exception filter |
+| Database | `apps/api/prisma` — PostgreSQL datasource, M2 init migration, `PrismaService` + `DatabaseModule` |
+| Packages | `packages/shared`, `packages/geo-contracts`, `packages/itinerary-engine` with unit tests |
+| Docker | `docker-compose.yml` — PostgreSQL 16, volume, healthcheck |
+| CI | `.github/workflows/ci.yml` |
+| Env template | `.env.example` |
 
-- pnpm workspace (`apps/web`, `apps/api`, `packages/shared`, `packages/geo-contracts`, `packages/itinerary-engine`).
-- Docker Compose PostgreSQL; README run instructions.
-- NestJS health + Config; Next.js shell; GitHub Actions CI skeleton.
-- No feature modules beyond health/config.
+### Verification run (2026-11-10)
 
-**Blockers:** None.
+| Check | Result |
+|-------|--------|
+| `pnpm install` | Passed |
+| `pnpm lint` | Passed |
+| `pnpm typecheck` | Passed |
+| `pnpm test` | Passed (packages + API Supertest health + web smoke) |
+| `pnpm build` | Passed (all workspaces) |
+| API starts without DB | Passed — health `degraded`, database check `error` |
+| API health HTTP 200 | Passed (without Postgres running) |
+| Docker Compose PostgreSQL | **Not verified** — Docker daemon unavailable on implementation host |
+| Prisma live DB connection | **Not verified** — requires Compose Postgres (`pnpm db:migrate` after `docker compose up -d`) |
 
----
+### Limitations / follow-up for maintainer
 
-## M3 — Authentication and trip management
+1. Start **Docker Desktop**, run `docker compose up -d`, then `pnpm db:migrate` and confirm health shows `status: "ok"` and `checks.database.status: "ok"`.
+2. Commit M2 implementation (lockfile, apps, packages, CI) — agent did not commit or push per instructions.
+3. **shadcn/ui** not initialized in M2 (Tailwind-only shell; shadcn can be added early in M3 if desired).
+4. Playwright E2E is optional in M2 roadmap — not added yet.
 
-**Status:** NOT STARTED
+### Pending work (M2)
 
-**Completed work:** None.
-
-**Pending work:** Session auth, trips, invitations, membership guards, Prisma models for User/Session/Trip/TripMember/TripInvitation, web auth and trip CRUD UI.
-
-**Blockers:** Depends on M2.
-
----
-
-## M4 — Group intelligence
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** Preferences, destinations, polls/votes, itinerary-engine scoring, **RecommendationSnapshot** persistence, explainable ranking UI.
-
-**Blockers:** Depends on M3.
-
----
-
-## M5 — Maps and location discovery
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** geo-contracts, Geoapify adapter + stub, MapLibre UI, Place/SavedPlace.
-
-**Blockers:** Depends on M3.
+None for code delivery; only local Docker verification and git commit remain.
 
 ---
 
-## M6 — Itinerary engine
+## M3 — M12
 
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** TripDay/Item/Revision, `expectedRevision` / 409, optimisation heuristics, optional BullMQ for matrix jobs.
-
-**Blockers:** Depends on M3, M5.
-
----
-
-## M7 — Collaboration
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** WebSocket gateway, post-commit broadcast, client invalidation, 409 UX.
-
-**Blockers:** Depends on M6.
-
----
-
-## M8 — Wallet
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** Expenses, splits, settlements (minor units).
-
-**Blockers:** Depends on M3.
-
----
-
-## M9 — Bookings and documents
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** Booking CRUD with confirmed flag, FileAsset + local StorageAdapter.
-
-**Blockers:** Depends on M3; M6 for item linking.
-
----
-
-## M10 — Live trip
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** Active trip “today” command center, status transitions.
-
-**Blockers:** Depends on M6, M9 recommended.
-
----
-
-## M11 — Adaptive replanning
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** ReplanningProposal workflow, booking/lock preservation, organizer approval.
-
-**Blockers:** Depends on M6, M9; M5 for alternatives when geo available.
-
----
-
-## M12 — Memories and production release
-
-**Status:** NOT STARTED
-
-**Completed work:** None.
-
-**Pending work:** TripMemory, templates, **`docs/DEPLOY.md`**, production hardening, regression E2E.
-
-**Blockers:** Depends on prior milestones; production storage/hosting choices deferred until this phase.
+**Status:** NOT STARTED (unchanged). See prior roadmap entries in git history of this file.
 
 ---
 
 ## Cross-cutting blockers
 
-| Blocker | Impact | Resolution phase |
-|---------|--------|------------------|
-| Production hosting not selected | No prod deploy | M12 |
-| Production object storage not selected | No prod uploads | M12 |
-| Redis/BullMQ not provisioned | Async jobs run sync or skip | M6+ when enabled |
-| Geoapify API key not configured | Live geo in dev only | M5 (optional env) |
+| Blocker | Impact | Resolution |
+|---------|--------|------------|
+| Production hosting | No prod deploy | M12 |
+| Git commit for M2 | Checkpoint stale | User commit after review |
 
 ---
 
 ## How to update this file
 
-When a milestone is completed, set status to **COMPLETE**, list delivered artifacts (paths/modules), update **Last verified Git checkpoint** after commit, and clear pending work for that milestone.
+When completing a milestone: set status to **COMPLETE**, list artifacts, run verification commands, update **Last verified Git checkpoint** after commit.

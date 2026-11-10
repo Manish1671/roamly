@@ -1,5 +1,9 @@
 
 node_modules/
+/generated/prisma
+apps/api/dist/
+packages/*/dist/
+.turbo/
 .pnpm-store/
 .next/
 dist/

@@ -1,0 +1,1 @@
+-- M2 foundation migration: PostgreSQL ready. Domain tables added in M3+.

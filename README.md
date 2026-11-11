@@ -166,10 +166,36 @@ All routes are under `/api/v1`, session-authenticated. Mutations also require CS
 
 Web routes: `/dashboard` (trip buckets + pending invites), `/trips/new`, `/trips/[tripId]`.
 
-Apply migration `20251110180000_trip_membership_invitations` after pulling (`pnpm --filter @roamly/api exec prisma migrate deploy`).
+Apply migrations after pulling (`pnpm --filter @roamly/api exec prisma migrate deploy`).
+
+## Group intelligence (M4 / 4A)
+
+Member preferences, curated destination catalog, and deterministic recommendation snapshots (`@roamly/group-intelligence`).
+
+| Area | Method | Path |
+|------|--------|------|
+| Preferences | `GET` | `/trips/:tripId/preferences` |
+| | `PUT` | `/trips/:tripId/preferences/me` |
+| | `GET` | `/trips/:tripId/preferences/status` |
+| Catalog | `GET` | `/destinations`, `/destinations/:destinationId` |
+| Recommendations | `POST` | `/trips/:tripId/recommendations/generate` |
+| | `GET` | `/trips/:tripId/recommendations`, `.../:recommendationId` |
+| Destination polls | `POST` | `/trips/:tripId/polls` (from recommendation snapshot) |
+| | `GET` | `/trips/:tripId/polls`, `.../:pollId`, `.../:pollId/results`, `.../decision` |
+| | `POST` | `.../:pollId/votes` (cast/change while open), `.../close`, `.../finalize` |
+
+Web: `/trips/[tripId]/preferences`, `/trips/[tripId]/recommendations`, `/trips/[tripId]/polls/[pollId]`.
+
+Catalog seeds automatically on first access (15 India destinations, `india-curated-v1`). Budget fields are **indicative estimates only**.
+
+Voting uses **equal weight** per accepted member; recommendation rank does **not** determine poll winners. Finalize requires poll closed, majority participation (default **50%** of members), no tie, and at least one vote.
+
+**Not in M4:** external destination APIs, maps/routing.
 
 ## Current milestone
 
-**M3 — Authentication and trip management** is implemented (3A + 3B).
+**M4** — group preferences, recommendations, destination polls, and explicit finalization are implemented (4A + 4B).
 
-See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed progress.
+See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and [packages/group-intelligence/README.md](packages/group-intelligence/README.md).
+
+**M3** authentication and trip management remains complete (3A + 3B).

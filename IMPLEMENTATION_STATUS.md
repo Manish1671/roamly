@@ -1,6 +1,6 @@
 # Roamly — Implementation Status
 
-**Last status review:** 2026-11-11 (M3 verification + test hardening)
+**Last status review:** 2026-11-11 (M4 / 4B destination voting)
 
 **Last verified Git checkpoint:** unchanged — commit pending user action
 
@@ -12,70 +12,77 @@
 |----|-----------|--------|
 | M1 | Product definition and architecture | **COMPLETE** |
 | M2 | Project foundation | **COMPLETE** |
-| M3 | Authentication and trip management | **COMPLETE** (3A + 3B verified locally) |
-| M4–M12 | … | **NOT STARTED** |
+| M3 | Authentication and trip management | **COMPLETE** |
+| M4 | Group intelligence & decisions | **COMPLETE** — **4A** preferences/recommendations; **4B** voting & finalization |
+| M5–M12 | … | **NOT STARTED** |
 
 ---
 
-## M3 — Authentication (3A)
+## M4 / 4A — Group preferences, catalog & recommendations
 
-**Status:** COMPLETE
+**Status:** COMPLETE (implemented + tested locally with Postgres)
 
 **Delivered:**
 
-- Prisma `User` + `Session` models; migration `20251110120000_auth_user_session`
-- Nest `AuthModule`: Argon2id, hashed session tokens, HTTP-only cookies, CSRF + trusted origin
-- API: `GET/POST` routes under `/api/v1/auth/*`
-- Shared Zod schemas in `@roamly/shared`
-- Web: `/login`, `/register`, `/dashboard`, auth header, React Hook Form
-- Tests: `auth.service.spec.ts`, `auth.e2e-spec.ts`
+- Prisma: `CatalogDestination`, `MemberPreference`, `RecommendationSnapshot`; migration `20251111120000_group_intelligence`
+- Pure package `@roamly/group-intelligence` (deterministic scoring, hard constraints, fairness)
+- Curated **15** India destinations (`india-curated-v1`); idempotent DB seed on first catalog access
+- `GroupIntelligenceModule`: preferences, catalog, recommendation snapshots
+- Shared Zod/types in `packages/shared/src/preferences.ts`
+- Web: `/trips/[tripId]/preferences`, `/trips/[tripId]/recommendations`
+- Tests: engine unit tests, `group-intelligence.e2e-spec.ts`
 
-**Limitations:**
+**Deferred (post-M4):**
 
-- OAuth deferred
-- Rate limiting not added yet
-- CI runs Postgres 16 service + `prisma migrate deploy`; auth/trips e2e **fail fast** if the database is unreachable (no silent skip)
+- External destination API providers (boundary ready via `DestinationCatalogProvider`)
+- Playwright UI tests
+- Email, maps, itinerary
 
 ---
 
-## M3 — Trip management, invitations, membership (3B)
+## M4 / 4B — Destination voting & finalization
 
-**Status:** COMPLETE (implemented + tested locally with Postgres on `DATABASE_URL`)
+**Status:** COMPLETE (implemented + tested locally with Postgres)
 
 **Delivered:**
 
-- Prisma `Trip`, `TripMembership`, `TripInvitation`; enums `TripRole`, `InvitationStatus`
-- Migration `20251110180000_trip_membership_invitations` (partial unique index: one `PENDING` invite per trip + invitee)
-- Nest `TripsModule`: `TripAuthorizationService`, permission helpers, trip/member/invitation services
-- Non-members receive **404** on trip-scoped routes (no membership enumeration via trip id)
-- Archived trips: read-only; no new invitations
-- Shared Zod schemas in `packages/shared/src/trips.ts`
-- Web: dashboard buckets + pending invites, `/trips/new`, `/trips/[tripId]` workspace
-- Tests: `trip-permissions.spec.ts`, `trips.e2e-spec.ts` (archived trip, editor RBAC, last owner, concurrent accept)
+- Prisma: `DestinationPoll`, `DestinationPollVote`, `TripDestinationDecision`; enum `PollStatus`; migration `20251111180000_destination_polls_voting` (partial unique index: one **OPEN** poll per trip)
+- Shared types/Zod in `packages/shared/src/voting.ts` (`DEFAULT_MIN_PARTICIPATION_RATIO = 0.5`)
+- API: `DestinationPollsService` + controller under `/trips/:tripId/polls` (create, list, vote, close, results, finalize, latest decision)
+- Pure tally rules in `poll-results.ts` (participation, tie detection, finalization gates)
+- Permissions: `VOTE_ON_POLL` (all accepted roles incl. **VIEWER**); `MANAGE_POLL` (owner/editor)
+- Web: poll from recommendations snapshot, `/trips/[tripId]/polls/[pollId]`, finalized destination on trip workspace
+- Tests: `poll-results.spec.ts` (4 unit), `destination-polls.e2e-spec.ts` (3 integration flows), permission spec updates
 
-**Deferred (out of 3B scope):**
+**Voting rules (product):**
 
-- Email delivery for invitations (in-app discovery only)
-- Itinerary, maps, expenses, real-time, WebSockets
-- Invite-by-email for users who are not yet registered
-
-**Role naming note:** M3 uses `OWNER | EDITOR | MEMBER | VIEWER`. Older architecture prose may say “organizer”; see [docs/ENGINEERING_DECISIONS.md](docs/ENGINEERING_DECISIONS.md).
+- **Eligibility:** every accepted `TripMembership` row (owner, editor, member, viewer); one vote per poll (`@@unique([pollId, userId])`).
+- **Poll lifecycle:** `OPEN` → `CLOSED` (owner/editor) → `FINALIZED` (explicit finalize after close).
+- **Participation for finalize:** at least **50%** of eligible members voted (`DEFAULT_MIN_PARTICIPATION_RATIO`), **>0** votes, single leader (no tie).
+- **Ties / no votes / low participation:** finalize rejected with `finalizeBlockReason`; no silent winner.
+- **History:** `TripDestinationDecision` immutable per poll; re-finalize same poll returns **409**; new decisions require a new poll workflow.
 
 ---
 
-## Verification (2026-11-10, local)
+## M3 — Trip management
+
+**Status:** COMPLETE (see prior sections in git history / README)
+
+---
+
+## Verification (2026-11-11, local)
 
 | Command | Result |
 |---------|--------|
 | `pnpm lint` | Pass |
 | `pnpm typecheck` | Pass |
-| `pnpm test` | Pass (API: 21 Jest tests incl. auth + trips e2e) |
+| `pnpm test` | Pass (API **38** Jest tests; `@roamly/group-intelligence` **8** unit tests; workspace total **50**) |
 | `pnpm build` | Pass |
 
-Requires Postgres for full API e2e (default test URL uses port **5434** when configured in `apps/api/test/set-env.ts`).
+PostgreSQL required for API integration tests (CI uses service container + `prisma migrate deploy`).
 
 ---
 
 ## How to update this file
 
-Update checkpoint after commit; extend M4+ sections as milestones land.
+Update after commits; mark M5+ when next milestone lands.

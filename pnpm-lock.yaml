@@ -32,6 +32,9 @@ importers:
       '@prisma/client':
         specifier: ^6.1.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@roamly/group-intelligence':
+        specifier: workspace:*
+        version: link:../../packages/group-intelligence
       '@roamly/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -171,6 +174,27 @@ importers:
         version: 5.9.3
 
   packages/geo-contracts:
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.17.0
+        version: 9.39.5
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.5(jiti@2.7.0)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.15
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.18.1
+        version: 8.72.2(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+
+  packages/group-intelligence:
     devDependencies:
       '@eslint/js':
         specifier: ^9.17.0

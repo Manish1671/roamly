@@ -99,7 +99,7 @@ Credentials: environment variables only.
 
 | Decision | Choice |
 |----------|--------|
-| Algorithm | **Deterministic, explainable** scoring in `@roamly/itinerary-engine` |
+| Algorithm | **Deterministic, explainable** scoring in `@roamly/group-intelligence` (M4A; itinerary-engine remains for itinerary math) |
 | Versioning | **`algorithmVersion`** string constant in engine; stored on each snapshot |
 | Persistence | **`RecommendationSnapshot`** per compute run (not ephemeral-only) |
 | Snapshot contents | `tripId`, `algorithmVersion`, `preferenceSnapshotJson`, candidate ids, `scoreBreakdownJson`, ranked order, `createdAt`, `createdById` (optional) |
@@ -184,6 +184,19 @@ Downloads via authenticated API proxy or short-lived signed URLs — never publi
 | Vote | Unique `(pollId, userId)` |
 | Retryable POST | Optional `Idempotency-Key` header → store hash + response in `IdempotencyRecord` (TTL) for expenses/uploads |
 | Itinerary mutate | **`expectedRevision`** — not idempotent across versions; retries must refresh revision |
+
+## Destination voting (M4B)
+
+| Topic | Decision |
+|-------|----------|
+| Eligible voters | All accepted trip members (`TripMembership`), including **VIEWER**; equal weight (no score-weighted votes). |
+| One active vote | `DestinationPollVote` unique `(pollId, userId)`; upsert inside a transaction while poll is `OPEN`. |
+| One open poll | Partial unique index on `destination_polls(trip_id) WHERE status = 'OPEN'`. |
+| Poll lifecycle | `OPEN` → `CLOSED` (`MANAGE_POLL`) → `FINALIZED` (explicit `POST …/finalize` only when closed). |
+| Participation threshold | `DEFAULT_MIN_PARTICIPATION_RATIO = 0.5` in `@roamly/shared` (50% of eligible members must vote). |
+| Finalization | Requires sufficient participation, >0 votes, and a single leading destination (ties rejected). |
+| Historical decisions | `TripDestinationDecision` per poll (`pollId` unique); immutable — duplicate finalize **409**; new outcome requires a new poll. |
+| Audit | Persist `results_snapshot_json` + link to source `recommendation_snapshot_id`. |
 
 ## Documentation and API contracts
 

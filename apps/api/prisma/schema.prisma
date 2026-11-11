@@ -22,6 +22,17 @@ enum InvitationStatus {
   EXPIRED
 }
 
+enum PreferenceStatus {
+  DRAFT
+  COMPLETE
+}
+
+enum PollStatus {
+  OPEN
+  CLOSED
+  FINALIZED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -35,6 +46,11 @@ model User {
   tripMemberships       TripMembership[]
   invitationsSent       TripInvitation[]   @relation("InvitationInviter")
   invitationsReceived   TripInvitation[]   @relation("InvitationInvitee")
+  memberPreferences     MemberPreference[]
+  recommendationRuns    RecommendationSnapshot[] @relation("RecommendationCreator")
+  pollsCreated          DestinationPoll[]      @relation("PollCreator")
+  pollVotes             DestinationPollVote[]
+  destinationDecisions  TripDestinationDecision[] @relation("DecisionFinalizer")
 
   @@map("users")
 }
@@ -71,6 +87,10 @@ model Trip {
   creator     User             @relation("TripCreator", fields: [createdById], references: [id], onDelete: Restrict)
   memberships TripMembership[]
   invitations TripInvitation[]
+  memberPreferences MemberPreference[]
+  recommendationSnapshots RecommendationSnapshot[]
+  destinationPolls        DestinationPoll[]
+  destinationDecisions    TripDestinationDecision[]
 
   @@index([createdById])
   @@index([archivedAt])
@@ -113,4 +133,129 @@ model TripInvitation {
   @@index([invitedUserId, status])
   @@index([expiresAt])
   @@map("trip_invitations")
+}
+
+model CatalogDestination {
+  id               String   @id
+  slug             String   @unique
+  name             String
+  countryCode      String   @map("country_code") @db.Char(2)
+  region           String
+  description      String   @db.Text
+  destinationTypes String[] @map("destination_types")
+  interestTags     String[] @map("interest_tags")
+  travelStyleTags  String[] @map("travel_style_tags")
+  climateProfile   String   @map("climate_profile")
+  activityTags     String[] @map("activity_tags")
+  budgetMin        Decimal  @map("budget_min") @db.Decimal(12, 2)
+  budgetMax        Decimal  @map("budget_max") @db.Decimal(12, 2)
+  budgetCurrency   String   @map("budget_currency") @db.Char(3)
+  catalogVersion   String   @map("catalog_version")
+  provenance       String
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([catalogVersion])
+  @@map("catalog_destinations")
+}
+
+model MemberPreference {
+  id                String           @id @default(uuid()) @db.Uuid
+  tripId            String           @map("trip_id") @db.Uuid
+  userId            String           @map("user_id") @db.Uuid
+  status            PreferenceStatus @default(DRAFT)
+  budgetMin         Decimal?         @map("budget_min") @db.Decimal(12, 2)
+  budgetMax         Decimal?         @map("budget_max") @db.Decimal(12, 2)
+  budgetCurrency    String?          @map("budget_currency") @db.Char(3)
+  budgetMaxIsHard   Boolean          @default(false) @map("budget_max_is_hard")
+  availabilityJson  Json             @default("[]") @map("availability_json")
+  interests         String[]
+  travelStyle       String?          @map("travel_style")
+  climatePreference String?          @map("climate_preference")
+  destinationTypes  String[]         @default([]) @map("destination_types")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, userId])
+  @@index([tripId])
+  @@map("member_preferences")
+}
+
+model RecommendationSnapshot {
+  id                     String   @id @default(uuid()) @db.Uuid
+  tripId                 String   @map("trip_id") @db.Uuid
+  algorithmVersion       String   @map("algorithm_version")
+  catalogVersion         String   @map("catalog_version")
+  preferenceSnapshotJson Json     @map("preference_snapshot_json")
+  resultJson             Json     @map("result_json")
+  createdById            String?  @map("created_by_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  trip    Trip  @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  creator User? @relation("RecommendationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  polls   DestinationPoll[]
+
+  @@index([tripId, createdAt(sort: Desc)])
+  @@map("recommendation_snapshots")
+}
+
+model DestinationPoll {
+  id                       String     @id @default(uuid()) @db.Uuid
+  tripId                   String     @map("trip_id") @db.Uuid
+  recommendationSnapshotId String     @map("recommendation_snapshot_id") @db.Uuid
+  status                   PollStatus @default(OPEN)
+  destinationIds           String[]   @map("destination_ids")
+  createdById              String     @map("created_by_id") @db.Uuid
+  createdAt                DateTime   @default(now()) @map("created_at")
+  closedAt                 DateTime?  @map("closed_at")
+  finalizedAt              DateTime?  @map("finalized_at")
+
+  trip       Trip                    @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  snapshot   RecommendationSnapshot  @relation(fields: [recommendationSnapshotId], references: [id], onDelete: Restrict)
+  creator    User                    @relation("PollCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  votes      DestinationPollVote[]
+  decision   TripDestinationDecision?
+
+  @@index([tripId, status])
+  @@index([recommendationSnapshotId])
+  @@map("destination_polls")
+}
+
+model DestinationPollVote {
+  id            String   @id @default(uuid()) @db.Uuid
+  pollId        String   @map("poll_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  destinationId String   @map("destination_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  poll DestinationPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([pollId])
+  @@map("destination_poll_votes")
+}
+
+model TripDestinationDecision {
+  id                       String   @id @default(uuid()) @db.Uuid
+  tripId                   String   @map("trip_id") @db.Uuid
+  pollId                   String   @unique @map("poll_id") @db.Uuid
+  destinationId            String   @map("destination_id")
+  recommendationSnapshotId String   @map("recommendation_snapshot_id") @db.Uuid
+  finalizedById            String   @map("finalized_by_id") @db.Uuid
+  finalizedAt              DateTime @default(now()) @map("finalized_at")
+  eligibleMemberCount      Int      @map("eligible_member_count")
+  votedMemberCount         Int      @map("voted_member_count")
+  resultsSnapshotJson      Json     @map("results_snapshot_json")
+
+  trip       Trip            @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  poll       DestinationPoll @relation(fields: [pollId], references: [id], onDelete: Restrict)
+  finalizer  User            @relation("DecisionFinalizer", fields: [finalizedById], references: [id], onDelete: Restrict)
+
+  @@index([tripId, finalizedAt(sort: Desc)])
+  @@map("trip_destination_decisions")
 }

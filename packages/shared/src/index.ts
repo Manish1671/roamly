@@ -1,4 +1,6 @@
 export * from './auth';
+export * from './preferences';
+export * from './voting';
 export * from './trips';
 
 export const ROAMLY_APP_NAME = 'Roamly' as const;

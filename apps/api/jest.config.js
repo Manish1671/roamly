@@ -12,5 +12,6 @@ module.exports = {
   testEnvironment: 'node',
   moduleNameMapper: {
     '^@roamly/shared$': '<rootDir>/../../packages/shared/dist/index.js',
+    '^@roamly/group-intelligence$': '<rootDir>/../../packages/group-intelligence/dist/index.js',
   },
 };

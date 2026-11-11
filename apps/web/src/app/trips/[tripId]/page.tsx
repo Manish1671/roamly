@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { TripMemberView, TripSummary } from '@roamly/shared';
 import { AppShell } from '@/components/app-shell';
 import { useAuth } from '@/hooks/use-auth';
+import { groupIntelligenceApi } from '@/lib/group-intelligence-api';
 import { tripsApi, TripsApiError } from '@/lib/trips-api';
 
 export default function TripWorkspacePage() {
@@ -28,6 +29,15 @@ export default function TripWorkspacePage() {
     queryFn: () => tripsApi.get(tripId),
     enabled: Boolean(tripId) && isAuthenticated,
     retry: false,
+  });
+
+  const decisionQuery = useQuery({
+    queryKey: ['trips', tripId, 'decision'],
+    queryFn: async () => {
+      const decision = await groupIntelligenceApi.getLatestDecision(tripId);
+      return decision;
+    },
+    enabled: Boolean(tripId) && tripQuery.isSuccess,
   });
 
   const membersQuery = useQuery({
@@ -104,11 +114,31 @@ export default function TripWorkspacePage() {
             ) : null}
           </div>
           <p className="text-lg text-roamly-navy/75">{trip.destinationName}</p>
+          {decisionQuery.data && (
+            <p className="rounded-lg border border-roamly-teal/40 bg-roamly-teal/5 px-3 py-2 text-sm text-roamly-navy">
+              Finalized group destination:{' '}
+              <strong>{decisionQuery.data.destinationName ?? decisionQuery.data.destinationId}</strong>
+            </p>
+          )}
           <p className="text-sm text-roamly-navy/60">
             {trip.startDate} → {trip.endDate}
             {trip.budgetAmount ? ` · ${trip.budgetCurrency} ${trip.budgetAmount}` : ''}
           </p>
           <p className="text-xs uppercase tracking-wide text-roamly-teal">Your role: {trip.myRole}</p>
+          <div className="flex flex-wrap gap-3 pt-2">
+            <Link
+              href={`/trips/${tripId}/preferences`}
+              className="rounded-lg border border-roamly-sand px-3 py-1.5 text-sm text-roamly-navy hover:border-roamly-teal"
+            >
+              Group preferences
+            </Link>
+            <Link
+              href={`/trips/${tripId}/recommendations`}
+              className="rounded-lg border border-roamly-sand px-3 py-1.5 text-sm text-roamly-navy hover:border-roamly-teal"
+            >
+              Recommendations
+            </Link>
+          </div>
         </header>
 
         {canEdit ? <TripEditPanel trip={trip} tripId={tripId} onUpdated={() => queryClient.invalidateQueries({ queryKey: ['trips', tripId] })} /> : null}

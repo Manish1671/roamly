@@ -8,6 +8,11 @@ describe('trip permissions matrix', () => {
     expect(roleHasPermission('VIEWER', 'EDIT_TRIP')).toBe(false);
   });
 
+  it('allows viewers to vote but not manage polls', () => {
+    expect(roleHasPermission('VIEWER', 'VOTE_ON_POLL')).toBe(true);
+    expect(roleHasPermission('VIEWER', 'MANAGE_POLL')).toBe(false);
+  });
+
   it('allows editors to edit but not manage membership', () => {
     expect(roleHasPermission('EDITOR', 'EDIT_TRIP')).toBe(true);
     expect(roleHasPermission('EDITOR', 'INVITE')).toBe(false);

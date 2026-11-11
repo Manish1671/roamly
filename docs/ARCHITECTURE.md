@@ -238,7 +238,11 @@ Conceptual model (not Prisma). UUID primary keys.
 
 **DestinationCandidate** — trip-scoped options.
 
-**Poll** / **Vote** — vote unique `(pollId, userId)`.
+**DestinationPoll** — scoped to trip + `RecommendationSnapshot`; `PollStatus` `OPEN` | `CLOSED` | `FINALIZED`; at most one `OPEN` poll per trip (partial unique index).
+
+**DestinationPollVote** — vote unique `(pollId, userId)`; destination must be in poll’s snapshot-backed list.
+
+**TripDestinationDecision** — immutable outcome per poll (`pollId` unique); stores results snapshot JSON for audit.
 
 **RecommendationSnapshot** — persisted ranking run:
 
